@@ -17,7 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
-use crate::config::Config;
+use crate::config::{Config, TargetMode};
 use crate::error::{AppError, AppResult};
 use crate::platform::write_debug_warning;
 
@@ -163,6 +163,23 @@ impl SettingsWindow {
             operation: "DestroyWindow settings",
             source,
         })
+    }
+
+    pub fn target_mode(&self) -> Option<TargetMode> {
+        self.current.target_mode()
+    }
+
+    pub fn select_target_mode(&mut self, mode: TargetMode) -> AppResult<()> {
+        let config = self.current.for_target_mode(mode);
+        config.save(&self.path)?;
+        self.sender
+            .send(config.clone())
+            .map_err(|_| AppError::SettingsChannel)?;
+        self.current = config;
+        if !self.window.0.is_null() {
+            self.populate()?;
+        }
+        Ok(())
     }
 
     fn create_controls(&mut self, instance: HINSTANCE) -> AppResult<()> {
@@ -651,3 +668,4 @@ mod tests {
         SettingsWindow::unregister_class(instance).unwrap();
     }
 }
+

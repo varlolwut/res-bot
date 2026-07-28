@@ -5,6 +5,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetMode {
+    Lineage,
+    Parsec,
+}
+
+impl TargetMode {
+    pub fn title_fragment(self) -> &'static str {
+        match self {
+            Self::Lineage => "lineage",
+            Self::Parsec => "parsec",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Config {
     pub window_title_fragments: Vec<String>,
@@ -71,6 +86,22 @@ impl Config {
             path: path.display().to_string(),
             source,
         })
+    }
+
+    pub fn target_mode(&self) -> Option<TargetMode> {
+        if self.window_title_fragments.len() != 1 {
+            return None;
+        }
+        let fragment = self.window_title_fragments[0].trim();
+        [TargetMode::Lineage, TargetMode::Parsec]
+            .into_iter()
+            .find(|mode| fragment.eq_ignore_ascii_case(mode.title_fragment()))
+    }
+
+    pub fn for_target_mode(&self, mode: TargetMode) -> Self {
+        let mut updated = self.clone();
+        updated.window_title_fragments = vec![mode.title_fragment().to_owned()];
+        updated
     }
 
     pub fn validate(&self) -> AppResult<()> {
@@ -208,4 +239,18 @@ mod tests {
 
         assert_eq!(loaded, config);
     }
+
+    #[test]
+    fn target_mode_replaces_only_window_title_fragments() {
+        let config = Config::built_in();
+        let parsec = config.for_target_mode(super::TargetMode::Parsec);
+
+        assert_eq!(parsec.target_mode(), Some(super::TargetMode::Parsec));
+        assert_eq!(parsec.poll_interval_seconds, config.poll_interval_seconds);
+        assert_eq!(
+            parsec.relocate_cursor_after_click,
+            config.relocate_cursor_after_click
+        );
+    }
 }
+

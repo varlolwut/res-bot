@@ -158,7 +158,7 @@ impl DiagnosticWindow {
         self.layout()?;
         self.enabled.store(true, Ordering::Release);
         self.append_line(
-            "Диагностика включена. Вернитесь в Lineage II; закрытие этого окна остановит запись."
+            "Диагностика включена. Вернитесь в выбранное целевое окно; закрытие этого окна остановит запись."
                 .to_owned(),
         )?;
         unsafe {
@@ -548,3 +548,4 @@ mod tests {
         assert!(!enabled.load(Ordering::Acquire));
     }
 }
+

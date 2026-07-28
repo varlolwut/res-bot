@@ -78,7 +78,7 @@ fn run_cycle(config: &Config, ocr: &OcrConnector, tray: &TrayConnector) -> AppRe
     tray.log_diagnostic(|| "Начат цикл проверки.".to_owned())?;
     let Some(window) = matching_foreground_window(&config.window_title_fragments)? else {
         tray.log_diagnostic(|| {
-            "Пропуск: активное окно не соответствует заголовку Lineage II.".to_owned()
+            "Пропуск: активное окно не соответствует выбранному источнику изображения.".to_owned()
         })?;
         return Ok(());
     };
@@ -146,7 +146,9 @@ fn run_cycle(config: &Config, ocr: &OcrConnector, tray: &TrayConnector) -> AppRe
     };
     match attempt {
         ClickAttempt::Clicked(click) => {
-            thread::sleep(Duration::from_millis(300));
+            thread::sleep(Duration::from_millis(click_verification_delay_ms(
+                &window.title,
+            )));
             match verify_click_result(config, window.handle, verified_dialog)? {
                 ClickResultVerification::Confirmed => tray.log_diagnostic(|| {
                     format!(
@@ -170,7 +172,7 @@ fn run_cycle(config: &Config, ocr: &OcrConnector, tray: &TrayConnector) -> AppRe
                 }),
                 ClickResultVerification::WindowChanged => tray.log_diagnostic(|| {
                     format!(
-                        "Результат клика нельзя проверить: Lineage II перестала быть активным окном, action={}, screen_x={}, screen_y={}.",
+                        "Результат клика нельзя проверить: целевое окно перестало быть активным, action={}, screen_x={}, screen_y={}.",
                         action_label(confirmed.action),
                         click.target.x,
                         click.target.y
@@ -326,13 +328,13 @@ fn confirm_analysis(
         thread::sleep(Duration::from_millis(config.confirmation_interval_ms));
         let Some(window) = matching_foreground_window(&config.window_title_fragments)? else {
             tray.log_diagnostic(|| {
-                "Подтверждение отменено: Lineage II перестала быть активным окном.".to_owned()
+                "Подтверждение отменено: целевое окно перестало быть активным.".to_owned()
             })?;
             return Ok(None);
         };
         if window.handle != expected_window {
             tray.log_diagnostic(|| {
-                "Подтверждение отменено: активным стало другое окно Lineage II.".to_owned()
+                "Подтверждение отменено: активным стало другое целевое окно.".to_owned()
             })?;
             return Ok(None);
         }
@@ -370,13 +372,11 @@ fn verify_click_target(
     expected_dialog: DialogCandidate,
 ) -> AppResult<Option<(Frame, DialogCandidate)>> {
     let Some(verified_window) = matching_foreground_window(&config.window_title_fragments)? else {
-        tray.log_diagnostic(|| {
-            "Клик отменён: Lineage II перестала быть активным окном.".to_owned()
-        })?;
+        tray.log_diagnostic(|| "Клик отменён: целевое окно перестало быть активным.".to_owned())?;
         return Ok(None);
     };
     if verified_window.handle != expected_window {
-        tray.log_diagnostic(|| "Клик отменён: активным стало другое окно Lineage II.".to_owned())?;
+        tray.log_diagnostic(|| "Клик отменён: активным стало другое целевое окно.".to_owned())?;
         return Ok(None);
     }
     let verified_frame = capture_window(&verified_window)?;
@@ -540,6 +540,14 @@ fn same_dialog(left: DialogCandidate, right: DialogCandidate) -> bool {
         && left.bounds.height.abs_diff(right.bounds.height) <= 20
 }
 
+fn click_verification_delay_ms(window_title: &str) -> u64 {
+    if window_title.to_lowercase().contains("parsec") {
+        800
+    } else {
+        300
+    }
+}
+
 fn same_decision_evidence(left: &FrameAnalysis, right: &FrameAnalysis) -> bool {
     left.percentage == right.percentage
         && left.numbered_nickname == right.numbered_nickname
@@ -605,7 +613,7 @@ fn run_self_check(config: &Config, ocr: &OcrConnector, tray: &TrayConnector) -> 
             items.push(SelfCheckItem {
                 status: SelfCheckStatus::Failed,
                 name: "Активное окно",
-                details: "Lineage II не активна или заголовок не совпал".to_owned(),
+                details: "целевое окно не активно или его заголовок не совпал".to_owned(),
             });
             return format_self_check_report(&items);
         }
@@ -742,10 +750,10 @@ mod tests {
     use crate::platform::{OcrConnector, TrayConnector};
 
     use super::{
-        FrameAnalysis, SelfCheckItem, SelfCheckStatus, compact_diagnostic_text,
-        contains_name_like_token, format_self_check_report, parse_percentage,
-        recognize_dialog_region, recognize_original_region, recognize_player_suffix,
-        same_decision_evidence,
+        FrameAnalysis, SelfCheckItem, SelfCheckStatus, click_verification_delay_ms,
+        compact_diagnostic_text, contains_name_like_token, format_self_check_report,
+        parse_percentage, recognize_dialog_region, recognize_original_region,
+        recognize_player_suffix, same_decision_evidence,
     };
 
     #[test]
@@ -761,6 +769,12 @@ mod tests {
             compact_diagnostic_text("  first\r\n second   third  ", 12),
             "first second…"
         );
+    }
+
+    #[test]
+    fn parsec_click_verification_allows_for_stream_round_trip() {
+        assert_eq!(click_verification_delay_ms("Parsec - Screen 1"), 800);
+        assert_eq!(click_verification_delay_ms("Lineage II"), 300);
     }
 
     #[test]
@@ -886,3 +900,4 @@ mod tests {
         }
     }
 }
+

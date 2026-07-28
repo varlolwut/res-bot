@@ -15,15 +15,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CREATESTRUCTW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW,
     DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
     GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, IDOK, LR_DEFAULTCOLOR, MB_ICONINFORMATION,
-    MB_OK, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW, PostQuitMessage,
-    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP,
-    WM_USER, WNDCLASSW,
+    MB_OK, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, MessageBoxW,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
+    SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+    UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY,
+    WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP, WM_USER, WNDCLASSW,
 };
 use windows::core::{PCWSTR, w};
 
-use crate::config::Config;
+use crate::config::{Config, TargetMode};
 use crate::error::{AppError, AppResult};
 use crate::platform::{
     diagnostics::DiagnosticWindow, settings::SettingsWindow, tray_icon::ICON_BYTES,
@@ -35,6 +35,8 @@ const SETTINGS_MENU_ID: usize = 1;
 const DIAGNOSTICS_MENU_ID: usize = 2;
 const SELF_CHECK_MENU_ID: usize = 3;
 const EXIT_MENU_ID: usize = 4;
+const LINEAGE_MODE_MENU_ID: usize = 5;
+const PARSEC_MODE_MENU_ID: usize = 6;
 const TRAY_CALLBACK_MESSAGE: u32 = WM_USER + 1;
 const DIAGNOSTIC_EVENT_MESSAGE: u32 = WM_USER + 2;
 const SELF_CHECK_REPORT_MESSAGE: u32 = WM_USER + 3;
@@ -45,6 +47,9 @@ const WINDOW_NAME: PCWSTR = w!("res-bot");
 const SETTINGS_LABEL: PCWSTR = w!("Настройки");
 const DIAGNOSTICS_LABEL: PCWSTR = w!("Диагностика");
 const SELF_CHECK_LABEL: PCWSTR = w!("Самопроверка");
+const TARGET_MODE_LABEL: PCWSTR = w!("Источник изображения");
+const LINEAGE_MODE_LABEL: PCWSTR = w!("Lineage II");
+const PARSEC_MODE_LABEL: PCWSTR = w!("Parsec");
 const EXIT_LABEL: PCWSTR = w!("Выход");
 const TASKBAR_CREATED: PCWSTR = w!("TaskbarCreated");
 
@@ -432,7 +437,12 @@ unsafe extern "system" fn tray_window_procedure(
             TRAY_CALLBACK_MESSAGE => {
                 let event = lparam.0 as u32;
                 if event == WM_RBUTTONUP || event == WM_CONTEXTMENU || event == WM_LBUTTONUP {
-                    match show_context_menu(window) {
+                    match show_context_menu(window, state.settings.target_mode()) {
+                        Ok(TrayCommand::SelectTargetMode(mode)) => {
+                            if let Err(error) = state.settings.select_target_mode(mode) {
+                                close_after_error(window, state, error);
+                            }
+                        }
                         Ok(TrayCommand::OpenSettings) => {
                             if let Err(error) = state.settings.open(state.instance) {
                                 close_after_error(window, state, error);
@@ -507,14 +517,50 @@ fn record_error(state: &mut TrayThreadState, error: AppError) {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrayCommand {
     None,
+    SelectTargetMode(TargetMode),
     OpenSettings,
     OpenDiagnostics,
     StartSelfCheck,
     Exit,
 }
 
-fn show_context_menu(window: HWND) -> AppResult<TrayCommand> {
+fn show_context_menu(window: HWND, target_mode: Option<TargetMode>) -> AppResult<TrayCommand> {
     let menu = Menu::create()?;
+    let mode_menu = Menu::create()?;
+    append_checked_menu_item(
+        mode_menu.handle,
+        LINEAGE_MODE_MENU_ID,
+        LINEAGE_MODE_LABEL,
+        target_mode == Some(TargetMode::Lineage),
+        "AppendMenuW Lineage mode",
+    )?;
+    append_checked_menu_item(
+        mode_menu.handle,
+        PARSEC_MODE_MENU_ID,
+        PARSEC_MODE_LABEL,
+        target_mode == Some(TargetMode::Parsec),
+        "AppendMenuW Parsec mode",
+    )?;
+    let mode_handle = mode_menu.handle;
+    unsafe {
+        AppendMenuW(
+            menu.handle,
+            MF_POPUP | MF_STRING,
+            mode_handle.0 as usize,
+            TARGET_MODE_LABEL,
+        )
+    }
+    .map_err(|source| AppError::Windows {
+        operation: "AppendMenuW target mode",
+        source,
+    })?;
+    mode_menu.attach();
+    unsafe { AppendMenuW(menu.handle, MF_SEPARATOR, 0, PCWSTR::null()) }.map_err(|source| {
+        AppError::Windows {
+            operation: "AppendMenuW target separator",
+            source,
+        }
+    })?;
     unsafe { AppendMenuW(menu.handle, MF_STRING, SETTINGS_MENU_ID, SETTINGS_LABEL) }.map_err(
         |source| AppError::Windows {
             operation: "AppendMenuW settings",
@@ -571,6 +617,8 @@ fn show_context_menu(window: HWND) -> AppResult<TrayCommand> {
         )
     };
     match selected.0 as usize {
+        LINEAGE_MODE_MENU_ID => Ok(TrayCommand::SelectTargetMode(TargetMode::Lineage)),
+        PARSEC_MODE_MENU_ID => Ok(TrayCommand::SelectTargetMode(TargetMode::Parsec)),
         SETTINGS_MENU_ID => Ok(TrayCommand::OpenSettings),
         DIAGNOSTICS_MENU_ID => Ok(TrayCommand::OpenDiagnostics),
         SELF_CHECK_MENU_ID => Ok(TrayCommand::StartSelfCheck),
@@ -579,9 +627,21 @@ fn show_context_menu(window: HWND) -> AppResult<TrayCommand> {
     }
 }
 
+fn append_checked_menu_item(
+    menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
+    identifier: usize,
+    label: PCWSTR,
+    checked: bool,
+    operation: &'static str,
+) -> AppResult<()> {
+    let state = if checked { MF_CHECKED } else { MF_UNCHECKED };
+    unsafe { AppendMenuW(menu, MF_STRING | state, identifier, label) }
+        .map_err(|source| AppError::Windows { operation, source })
+}
+
 fn show_self_check_instructions(parent: HWND) -> bool {
     let text = wide_string(
-        "После нажатия «ОК» у вас будет 3 секунды, чтобы вернуться в Lineage II.\r\n\r\nСамопроверка не управляет мышью и ничего не нажимает.",
+        "После нажатия «ОК» у вас будет 3 секунды, чтобы вернуться в выбранное целевое окно.\r\n\r\nСамопроверка не управляет мышью и ничего не нажимает.",
     );
     let title = wide_string("res-bot — самопроверка");
     (unsafe {
@@ -621,6 +681,7 @@ fn show_pending_self_check_report(parent: HWND, state: &mut TrayThreadState) -> 
 
 struct Menu {
     handle: windows::Win32::UI::WindowsAndMessaging::HMENU,
+    attached: bool,
 }
 
 impl Menu {
@@ -629,12 +690,22 @@ impl Menu {
             operation: "CreatePopupMenu",
             source,
         })?;
-        Ok(Self { handle })
+        Ok(Self {
+            handle,
+            attached: false,
+        })
+    }
+
+    fn attach(mut self) {
+        self.attached = true;
     }
 }
 
 impl Drop for Menu {
     fn drop(&mut self) {
+        if self.attached {
+            return;
+        }
         if let Err(error) = unsafe { DestroyMenu(self.handle) } {
             write_debug_warning(&format!("failed to destroy tray menu: error={error}"));
         }
@@ -803,3 +874,4 @@ mod tests {
         assert_eq!(destination[7], 0);
     }
 }
+
