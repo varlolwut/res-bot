@@ -59,6 +59,27 @@ pub fn has_numbered_nickname(text: &str) -> bool {
         })
 }
 
+pub fn has_numbered_nickname_header(text: &str) -> bool {
+    if has_numbered_nickname(text) {
+        return true;
+    }
+    let tokens = text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<&str>>();
+    let Some(suffix) = tokens.last() else {
+        return false;
+    };
+    suffix.len() == 2
+        && suffix.chars().all(|character| character.is_ascii_digit())
+        && tokens[..tokens.len() - 1]
+            .iter()
+            .flat_map(|token| token.chars())
+            .filter(|character| character.is_alphabetic())
+            .count()
+            >= 2
+}
+
 pub fn choose_action(percentage: ResurrectionPercentage, numbered_nickname: bool) -> Action {
     match (numbered_nickname, percentage) {
         (true, _) | (false, ResurrectionPercentage::Hundred) => Action::Accept,
@@ -71,7 +92,8 @@ mod tests {
     use crate::error::AppError;
 
     use super::{
-        Action, ResurrectionPercentage, choose_action, has_numbered_nickname, parse_percentage,
+        Action, ResurrectionPercentage, choose_action, has_numbered_nickname,
+        has_numbered_nickname_header, parse_percentage,
     };
 
     #[test]
@@ -95,11 +117,22 @@ mod tests {
 
     #[test]
     fn recognizes_exact_two_digit_suffix() {
-        assert!(has_numbered_nickname("lonedy_42"));
+        assert!(has_numbered_nickname("player_42"));
         assert!(has_numbered_nickname(" OtherName _ 07 "));
-        assert!(!has_numbered_nickname("lonedy"));
-        assert!(!has_numbered_nickname("lonedy_7"));
-        assert!(!has_numbered_nickname("lonedy_123"));
+        assert!(!has_numbered_nickname("player"));
+        assert!(!has_numbered_nickname("player_7"));
+        assert!(!has_numbered_nickname("player_123"));
+    }
+
+    #[test]
+    fn recognizes_suffix_when_panel_ocr_drops_underscore() {
+        assert!(has_numbered_nickname_header("120 jd01 17"));
+        assert!(has_numbered_nickname_header("120 jd.1 17"));
+        assert!(has_numbered_nickname_header("120 player_17"));
+        assert!(!has_numbered_nickname_header("120 player"));
+        assert!(!has_numbered_nickname_header("120 17"));
+        assert!(!has_numbered_nickname_header("120 H 17"));
+        assert!(!has_numbered_nickname_header("120 player 7"));
     }
 
     #[test]

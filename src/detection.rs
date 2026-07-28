@@ -59,6 +59,12 @@ pub fn find_player_panel_regions(frame: &Frame) -> Vec<Rect> {
                 .filter_map(|green_bar| panel_region(frame, *blue_bar, *green_bar))
         })
         .collect::<Vec<Rect>>();
+    regions.extend(
+        green
+            .iter()
+            .filter(|green_bar| has_stacked_status_bars(frame, **green_bar))
+            .filter_map(|green_bar| panel_region_from_green(frame, *green_bar)),
+    );
     regions.sort_by_key(|rect| (rect.y, rect.x));
     regions.dedup_by(|left, right| rectangles_overlap_significantly(*left, *right));
     regions
@@ -132,6 +138,68 @@ fn panel_region(frame: &Frame, blue: Component, green: Component) -> Option<Rect
         frame.width,
         frame.height,
     )
+}
+
+fn panel_region_from_green(frame: &Frame, green: Component) -> Option<Rect> {
+    let bounds = green.bounds;
+    clamp_rect(
+        Rect {
+            x: bounds.x - 22,
+            y: bounds.y - 68,
+            width: bounds.width + 46,
+            height: bounds.height + 84,
+        },
+        frame.width,
+        frame.height,
+    )
+}
+
+fn has_stacked_status_bars(frame: &Frame, green: Component) -> bool {
+    let bounds = green.bounds;
+    let top = (bounds.y - 40).max(0);
+    let bottom = (bounds.y - 4).max(top);
+    has_colored_row(
+        frame,
+        bounds.x,
+        bounds.right(),
+        top,
+        bottom,
+        ColorClass::Red,
+        25,
+    ) && has_colored_row(
+        frame,
+        bounds.x,
+        bounds.right(),
+        top,
+        bottom,
+        ColorClass::Blue,
+        45,
+    )
+}
+
+fn has_colored_row(
+    frame: &Frame,
+    left: i32,
+    right: i32,
+    top: i32,
+    bottom: i32,
+    class: ColorClass,
+    minimum_percentage: u32,
+) -> bool {
+    let clamped_left = left.max(0) as u32;
+    let clamped_right = right.min(frame.width as i32).max(left) as u32;
+    let clamped_top = top.max(0) as u32;
+    let clamped_bottom = bottom.min(frame.height as i32).max(top) as u32;
+    let width = clamped_right.saturating_sub(clamped_left);
+    if width == 0 {
+        return false;
+    }
+    (clamped_top..clamped_bottom).any(|y| {
+        let matching = (clamped_left..clamped_right)
+            .filter(|x| color_matches(frame.pixel(*x, y), class))
+            .count() as u32;
+        matching * 100 / width >= minimum_percentage
+    })
 }
 
 fn is_button_component(component: &Component) -> bool {
@@ -377,6 +445,79 @@ mod tests {
 
         assert_eq!(regions.len(), 1);
         assert!(regions[0].contains(Point { x: 70, y: 30 }));
+    }
+
+    #[test]
+    fn finds_status_panel_when_blue_bar_merges_with_blue_scene() {
+        let frame = frame_with_rectangles(&[
+            (
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 800,
+                    height: 600,
+                },
+                [100, 70, 40, 255],
+            ),
+            (
+                Rect {
+                    x: 300,
+                    y: 300,
+                    width: 150,
+                    height: 7,
+                },
+                [35, 35, 86, 255],
+            ),
+            (
+                Rect {
+                    x: 300,
+                    y: 324,
+                    width: 150,
+                    height: 7,
+                },
+                [28, 134, 94, 255],
+            ),
+        ]);
+
+        let regions = find_player_panel_regions(&frame);
+
+        assert_eq!(regions.len(), 1);
+        assert!(regions[0].contains(Point { x: 320, y: 270 }));
+    }
+
+    #[test]
+    fn ignores_party_panel_without_long_vp_bar() {
+        let frame = frame_with_rectangles(&[
+            (
+                Rect {
+                    x: 100,
+                    y: 100,
+                    width: 150,
+                    height: 7,
+                },
+                [35, 35, 86, 255],
+            ),
+            (
+                Rect {
+                    x: 100,
+                    y: 112,
+                    width: 150,
+                    height: 7,
+                },
+                [148, 110, 84, 255],
+            ),
+            (
+                Rect {
+                    x: 70,
+                    y: 70,
+                    width: 14,
+                    height: 14,
+                },
+                [28, 134, 94, 255],
+            ),
+        ]);
+
+        assert!(find_player_panel_regions(&frame).is_empty());
     }
 
     #[test]

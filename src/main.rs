@@ -18,7 +18,8 @@ use rand::Rng;
 
 use crate::config::Config;
 use crate::decision::{
-    Action, ResurrectionPercentage, choose_action, has_numbered_nickname, parse_percentage,
+    Action, ResurrectionPercentage, choose_action, has_numbered_nickname,
+    has_numbered_nickname_header, parse_percentage,
 };
 use crate::detection::{DialogCandidate, find_player_panel_regions, find_resurrection_dialog};
 use crate::error::{AppError, AppResult};
@@ -144,22 +145,77 @@ fn run_cycle(config: &Config, ocr: &OcrConnector, tray: &TrayConnector) -> AppRe
         Err(error) => return Err(error),
     };
     match attempt {
-        ClickAttempt::Clicked(click) => tray.log_diagnostic(|| {
+        ClickAttempt::Clicked(click) => {
+            thread::sleep(Duration::from_millis(300));
+            match verify_click_result(config, window.handle, verified_dialog)? {
+                ClickResultVerification::Confirmed => tray.log_diagnostic(|| {
+                    format!(
+                        "Клик подтверждён: action={}, screen_x={}, screen_y={}, movement_ms={}, cursor_relocated={}.",
+                        action_label(confirmed.action),
+                        click.target.x,
+                        click.target.y,
+                        click.duration_ms,
+                        click.cursor_relocated
+                    )
+                }),
+                ClickResultVerification::DialogStillPresent => tray.log_diagnostic(|| {
+                    format!(
+                        "Клик не подтверждён: диалог остался на экране, action={}, screen_x={}, screen_y={}, movement_ms={}, cursor_relocated={}.",
+                        action_label(confirmed.action),
+                        click.target.x,
+                        click.target.y,
+                        click.duration_ms,
+                        click.cursor_relocated
+                    )
+                }),
+                ClickResultVerification::WindowChanged => tray.log_diagnostic(|| {
+                    format!(
+                        "Результат клика нельзя проверить: Lineage II перестала быть активным окном, action={}, screen_x={}, screen_y={}.",
+                        action_label(confirmed.action),
+                        click.target.x,
+                        click.target.y
+                    )
+                }),
+            }
+        }
+        ClickAttempt::Cancelled(ClickCancellation::MouseMovedDuringApproach {
+            expected,
+            actual,
+        }) => tray.log_diagnostic(|| {
             format!(
-                "Клик выполнен: action={}, screen_x={}, screen_y={}, movement_ms={}, cursor_relocated={}.",
-                action_label(confirmed.action),
-                click.target.x,
-                click.target.y,
-                click.duration_ms,
-                click.cursor_relocated
+                "Клик отменён: курсор покинул собственную траекторию: expected_x={}, expected_y={}, actual_x={}, actual_y={}.",
+                expected.x, expected.y, actual.x, actual.y
             )
         }),
-        ClickAttempt::Cancelled(ClickCancellation::MouseMovedDuringApproach) => {
-            tray.log_diagnostic(|| {
-                "Клик отменён: пользователь переместил мышь во время движения курсора.".to_owned()
-            })
-        }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClickResultVerification {
+    Confirmed,
+    DialogStillPresent,
+    WindowChanged,
+}
+
+fn verify_click_result(
+    config: &Config,
+    expected_window: windows::Win32::Foundation::HWND,
+    expected_dialog: DialogCandidate,
+) -> AppResult<ClickResultVerification> {
+    let Some(window) = matching_foreground_window(&config.window_title_fragments)? else {
+        return Ok(ClickResultVerification::WindowChanged);
+    };
+    if window.handle != expected_window {
+        return Ok(ClickResultVerification::WindowChanged);
+    }
+    let frame = capture_window(&window)?;
+    let Some(dialog) = find_resurrection_dialog(&frame) else {
+        return Ok(ClickResultVerification::Confirmed);
+    };
+    if same_dialog(expected_dialog, dialog) {
+        return Ok(ClickResultVerification::DialogStillPresent);
+    }
+    Ok(ClickResultVerification::Confirmed)
 }
 
 struct FrameAnalysis {
@@ -350,6 +406,19 @@ fn recognize_player_suffix(
     tray.log_diagnostic(|| format!("Кандидаты панели персонажа: count={}.", regions.len()))?;
     let mut recognized_panel = false;
     for region in regions {
+        let header = player_nickname_header(region);
+        let header_text = recognize_original_region(ocr, frame, header, 5)?;
+        tray.log_diagnostic(|| {
+            format!(
+                "OCR заголовка панели: region={}, text={:?}.",
+                format_rect(header),
+                compact_diagnostic_text(&header_text, 120)
+            )
+        })?;
+        if has_numbered_nickname_header(&header_text) {
+            tray.log_diagnostic(|| "В заголовке панели найден суффикс _NN.".to_owned())?;
+            return Ok(Some(true));
+        }
         let text = recognize_original_region(ocr, frame, region, 3)?;
         tray.log_diagnostic(|| {
             format!(
@@ -369,7 +438,38 @@ fn recognize_player_suffix(
     Ok(recognized_panel.then_some(false))
 }
 
+fn player_nickname_header(panel: Rect) -> Rect {
+    Rect {
+        height: panel.height.min(34),
+        ..panel
+    }
+}
+
+fn dialog_percentage_region(dialog: Rect) -> Rect {
+    Rect {
+        x: dialog.x + 20,
+        y: dialog.y + 55,
+        width: dialog.width.saturating_sub(40),
+        height: dialog.height.min(58),
+    }
+}
+
 fn recognize_dialog_region(
+    ocr: &OcrConnector,
+    frame: &Frame,
+    region: crate::image::Rect,
+    scale_factor: u32,
+) -> AppResult<String> {
+    let primary = recognize_high_contrast_region(ocr, frame, region, scale_factor)?;
+    if parse_percentage(&primary)?.is_some() {
+        return Ok(primary);
+    }
+    let focused_region = dialog_percentage_region(region);
+    let focused = recognize_high_contrast_region(ocr, frame, focused_region, 8)?;
+    Ok(format!("{primary}\n{focused}"))
+}
+
+fn recognize_high_contrast_region(
     ocr: &OcrConnector,
     frame: &Frame,
     region: crate::image::Rect,
@@ -650,7 +750,7 @@ mod tests {
 
     #[test]
     fn player_panel_requires_name_like_text() {
-        assert!(contains_name_like_token("113 lonedy"));
+        assert!(contains_name_like_token("113 player"));
         assert!(contains_name_like_token("Персонаж_42"));
         assert!(!contains_name_like_token("113 HP MP"));
     }

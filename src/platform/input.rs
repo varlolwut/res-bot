@@ -31,13 +31,13 @@ pub enum ClickAttempt {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClickCancellation {
-    MouseMovedDuringApproach,
+    MouseMovedDuringApproach { expected: Point, actual: Point },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MovementOutcome {
     Completed,
-    Interrupted,
+    Interrupted { expected: Point, actual: Point },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,12 +89,15 @@ pub fn click_human_like_and_relocate(
     let mut random = rand::rng();
     let relocation_target =
         random_nearby_point(click.original, virtual_desktop_bounds()?, &mut random);
-    let cursor_relocated = move_cursor_bezier(
-        click.target,
-        relocation_target,
-        relocation_duration,
-        &mut random,
-    )? == MovementOutcome::Completed;
+    let cursor_relocated = matches!(
+        move_cursor_bezier(
+            click.target,
+            relocation_target,
+            relocation_duration,
+            &mut random,
+        )?,
+        MovementOutcome::Completed
+    );
     Ok(ClickAttempt::Clicked(ClickOutcome {
         target: click.target,
         duration_ms: click.duration_ms,
@@ -111,17 +114,22 @@ fn perform_click(
     let mut random = rand::rng();
     let target = random_point_in_button(button, frame_origin, &mut random);
     let duration_ms = random.random_range(timing.minimum_duration_ms..=timing.maximum_duration_ms);
-    if move_cursor_bezier(original, target, duration_ms, &mut random)?
-        == MovementOutcome::Interrupted
-    {
-        return Ok(Err(ClickCancellation::MouseMovedDuringApproach));
+    match move_cursor_bezier(original, target, duration_ms, &mut random)? {
+        MovementOutcome::Completed => {
+            send_left_click_at(target)?;
+            Ok(Ok(CompletedClick {
+                original,
+                target,
+                duration_ms,
+            }))
+        }
+        MovementOutcome::Interrupted { expected, actual } => {
+            Ok(Err(ClickCancellation::MouseMovedDuringApproach {
+                expected,
+                actual,
+            }))
+        }
     }
-    send_left_click()?;
-    Ok(Ok(CompletedClick {
-        original,
-        target,
-        duration_ms,
-    }))
 }
 
 fn key_pressed(virtual_key: u16) -> bool {
@@ -194,23 +202,34 @@ fn move_cursor_bezier(
     let step_ms = random.random_range(8_u64..=14_u64);
     let steps = (duration_ms / step_ms).max(2);
 
-    let mut last_set = start;
+    let mut commanded_points = vec![start];
     for step in 1..=steps {
         if step > 1 {
             let actual = cursor_position()?;
-            if point_distance_exceeds(last_set, actual, 4) {
-                return Ok(MovementOutcome::Interrupted);
+            if !matches_commanded_path(actual, &commanded_points, 8) {
+                return Ok(MovementOutcome::Interrupted {
+                    expected: *commanded_points
+                        .last()
+                        .expect("the commanded path always contains its start"),
+                    actual,
+                });
             }
         }
         let t = step as f64 / steps as f64;
         let point = cubic_bezier(start, control_one, control_two, target, t);
         send_absolute_move(point)?;
-        last_set = point;
+        commanded_points.push(point);
         if step < steps {
             thread::sleep(Duration::from_millis(step_ms));
         }
     }
     Ok(MovementOutcome::Completed)
+}
+
+fn matches_commanded_path(actual: Point, commanded_points: &[Point], tolerance: i32) -> bool {
+    commanded_points
+        .iter()
+        .any(|commanded| !point_distance_exceeds(*commanded, actual, tolerance))
 }
 
 fn point_distance_exceeds(left: Point, right: Point, tolerance: i32) -> bool {
@@ -266,19 +285,25 @@ fn cubic_bezier(start: Point, first: Point, second: Point, end: Point, t: f64) -
     }
 }
 
-fn send_left_click() -> AppResult<()> {
+fn send_left_click_at(point: Point) -> AppResult<()> {
     let inputs = [
+        absolute_move_input(point)?,
         mouse_input(MOUSEEVENTF_LEFTDOWN),
         mouse_input(MOUSEEVENTF_LEFTUP),
     ];
-    send_inputs("SendInput left click", &inputs)
+    send_inputs("SendInput absolute movement and left click", &inputs)
 }
 
 fn send_absolute_move(point: Point) -> AppResult<()> {
+    let input = absolute_move_input(point)?;
+    send_inputs("SendInput absolute mouse movement", &[input])
+}
+
+fn absolute_move_input(point: Point) -> AppResult<INPUT> {
     let desktop = virtual_desktop_bounds()?;
     let normalized_x = normalize_absolute_coordinate(point.x, desktop.x, desktop.width);
     let normalized_y = normalize_absolute_coordinate(point.y, desktop.y, desktop.height);
-    let input = INPUT {
+    Ok(INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
@@ -290,8 +315,7 @@ fn send_absolute_move(point: Point) -> AppResult<()> {
                 dwExtraInfo: 0,
             },
         },
-    };
-    send_inputs("SendInput absolute mouse movement", &[input])
+    })
 }
 
 fn normalize_absolute_coordinate(coordinate: i32, origin: i32, extent: u32) -> i32 {
@@ -339,7 +363,8 @@ mod tests {
     use crate::image::{Point, Rect};
 
     use super::{
-        cubic_bezier, normalize_absolute_coordinate, point_distance_exceeds, random_nearby_point,
+        cubic_bezier, matches_commanded_path, normalize_absolute_coordinate,
+        point_distance_exceeds, random_nearby_point,
     };
 
     #[test]
@@ -359,6 +384,31 @@ mod tests {
 
         assert!(!point_distance_exceeds(start, Point { x: 102, y: 198 }, 2));
         assert!(point_distance_exceeds(start, Point { x: 103, y: 200 }, 2));
+    }
+
+    #[test]
+    fn delayed_positions_from_own_commands_are_not_user_movement() {
+        let commanded = [
+            Point { x: 100, y: 200 },
+            Point { x: 120, y: 210 },
+            Point { x: 140, y: 220 },
+        ];
+
+        assert!(matches_commanded_path(
+            Point { x: 102, y: 199 },
+            &commanded,
+            8
+        ));
+        assert!(matches_commanded_path(
+            Point { x: 121, y: 212 },
+            &commanded,
+            8
+        ));
+        assert!(!matches_commanded_path(
+            Point { x: 170, y: 260 },
+            &commanded,
+            8
+        ));
     }
 
     #[test]
