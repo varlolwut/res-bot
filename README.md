@@ -1,7 +1,7 @@
 # res-bot
 
 <p align="center">
-  <img src="assets/res-bot-icon.svg" width="128" height="128" alt="Логотип res-bot">
+  <img src="assets/res-bot-icon.png" width="128" height="128" alt="Логотип res-bot">
 </p>
 
 `res-bot` — фоновый Windows-помощник для диалога воскрешения в Lineage II. Он
