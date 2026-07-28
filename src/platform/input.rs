@@ -178,4 +178,3 @@ mod tests {
         assert_eq!(cubic_bezier(start, first, second, end, 1.0), end);
     }
 }
-

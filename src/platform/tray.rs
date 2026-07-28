@@ -636,4 +636,3 @@ mod tests {
         assert_eq!(destination[7], 0);
     }
 }
-

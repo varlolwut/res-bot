@@ -379,4 +379,3 @@ mod tests {
         Frame::new(Point { x: 0, y: 0 }, width, height, pixels).unwrap()
     }
 }
-

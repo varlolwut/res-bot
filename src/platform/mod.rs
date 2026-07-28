@@ -13,4 +13,3 @@ pub use notify::{show_fatal_error, write_debug_warning};
 pub use ocr::OcrConnector;
 pub use tray::TrayConnector;
 pub use window::{GameWindow, initialize_dpi_awareness, matching_foreground_window};
-

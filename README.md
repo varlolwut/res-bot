@@ -181,4 +181,3 @@ Workflow GitHub Actions собирает и сохраняет `res-bot.exe` к�
 
 Подробности реализации и план многоконного режима:
 [`docs/architecture.md`](docs/architecture.md).
-

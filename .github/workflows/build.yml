@@ -65,4 +65,3 @@ jobs:
             --target "${{ github.sha }}" `
             --title "res-bot $tag" `
             --generate-notes
-
