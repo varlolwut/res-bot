@@ -69,12 +69,8 @@ jobs:
           } elseif ("${{ github.ref }}".StartsWith("refs/tags/v")) {
             "${{ github.ref_name }}"
           } else {
-            $manifest = Get-Content Cargo.toml -Raw
-            $version = [regex]::Match($manifest, '(?m)^version = "([^"]+)"$')
-            if (-not $version.Success) {
-              throw "Package version was not found in Cargo.toml"
-            }
-            "v$($version.Groups[1].Value)"
+            $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+            "v$($metadata.packages[0].version)"
           }
           if (gh release view $tag *> $null) {
             gh release upload $tag `
