@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::path::PathBuf;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,27 +14,37 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CREATESTRUCTW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW,
     DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
-    GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, LR_DEFAULTCOLOR, MF_SEPARATOR, MF_STRING,
-    MSG, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-    SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU,
-    WM_DESTROY, WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP, WM_USER, WNDCLASSW,
+    GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, IDOK, LR_DEFAULTCOLOR, MB_ICONINFORMATION,
+    MB_OK, MF_SEPARATOR, MF_STRING, MSG, MessageBoxW, PostMessageW, PostQuitMessage,
+    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP,
+    WM_USER, WNDCLASSW,
 };
 use windows::core::{PCWSTR, w};
 
+use crate::config::Config;
 use crate::error::{AppError, AppResult};
-use crate::platform::{diagnostics::DiagnosticWindow, tray_icon::ICON_BYTES, write_debug_warning};
+use crate::platform::{
+    diagnostics::DiagnosticWindow, settings::SettingsWindow, tray_icon::ICON_BYTES,
+    write_debug_warning,
+};
 
 const TRAY_ICON_ID: u32 = 1;
-const DIAGNOSTICS_MENU_ID: usize = 1;
-const EXIT_MENU_ID: usize = 2;
+const SETTINGS_MENU_ID: usize = 1;
+const DIAGNOSTICS_MENU_ID: usize = 2;
+const SELF_CHECK_MENU_ID: usize = 3;
+const EXIT_MENU_ID: usize = 4;
 const TRAY_CALLBACK_MESSAGE: u32 = WM_USER + 1;
 const DIAGNOSTIC_EVENT_MESSAGE: u32 = WM_USER + 2;
+const SELF_CHECK_REPORT_MESSAGE: u32 = WM_USER + 3;
 const ICON_SIZE: i32 = 16;
 const ICON_RESOURCE_VERSION: u32 = 0x0003_0000;
 const CLASS_NAME: PCWSTR = w!("res-bot-tray-window");
 const WINDOW_NAME: PCWSTR = w!("res-bot");
+const SETTINGS_LABEL: PCWSTR = w!("Настройки");
 const DIAGNOSTICS_LABEL: PCWSTR = w!("Диагностика");
+const SELF_CHECK_LABEL: PCWSTR = w!("Самопроверка");
 const EXIT_LABEL: PCWSTR = w!("Выход");
 const TASKBAR_CREATED: PCWSTR = w!("TaskbarCreated");
 
@@ -41,26 +52,36 @@ pub struct TrayConnector {
     exit_requested: Arc<AtomicBool>,
     diagnostics_enabled: Arc<AtomicBool>,
     diagnostics_sender: Sender<String>,
+    self_check_requested: Arc<AtomicBool>,
+    self_check_sender: Sender<String>,
+    settings_receiver: Receiver<Config>,
     window: usize,
     thread: Option<JoinHandle<AppResult<()>>>,
 }
 
 impl TrayConnector {
-    pub fn start() -> AppResult<Self> {
+    pub fn start(config: Config, config_path: PathBuf) -> AppResult<Self> {
         let exit_requested = Arc::new(AtomicBool::new(false));
         let thread_exit_requested = Arc::clone(&exit_requested);
         let diagnostics_enabled = Arc::new(AtomicBool::new(false));
         let thread_diagnostics_enabled = Arc::clone(&diagnostics_enabled);
         let (diagnostics_sender, diagnostics_receiver) = mpsc::channel::<String>();
+        let self_check_requested = Arc::new(AtomicBool::new(false));
+        let thread_self_check_requested = Arc::clone(&self_check_requested);
+        let (self_check_sender, self_check_receiver) = mpsc::channel::<String>();
+        let (settings_sender, settings_receiver) = mpsc::channel::<Config>();
         let (ready_sender, ready_receiver) = mpsc::sync_channel::<AppResult<usize>>(1);
-        let thread = thread::spawn(move || {
-            tray_thread(
-                thread_exit_requested,
-                thread_diagnostics_enabled,
-                diagnostics_receiver,
-                ready_sender,
-            )
-        });
+        let inputs = TrayThreadInputs {
+            exit_requested: thread_exit_requested,
+            diagnostics_enabled: thread_diagnostics_enabled,
+            diagnostics_receiver,
+            self_check_requested: thread_self_check_requested,
+            self_check_receiver,
+            settings_sender,
+            config,
+            config_path,
+        };
+        let thread = thread::spawn(move || tray_thread(inputs, ready_sender));
         let window = ready_receiver
             .recv()
             .map_err(|source| AppError::TrayThread {
@@ -71,6 +92,9 @@ impl TrayConnector {
             exit_requested,
             diagnostics_enabled,
             diagnostics_sender,
+            self_check_requested,
+            self_check_sender,
+            settings_receiver,
             window,
             thread: Some(thread),
         })
@@ -80,13 +104,54 @@ impl TrayConnector {
         self.exit_requested.load(Ordering::Acquire)
     }
 
+    pub fn take_self_check_requested(&self) -> bool {
+        self.self_check_requested.swap(false, Ordering::AcqRel)
+    }
+
+    pub fn complete_self_check(&self, report: String) -> AppResult<()> {
+        self.self_check_sender
+            .send(report)
+            .map_err(|_| AppError::SelfCheckChannel)?;
+        let window = HWND(self.window as *mut c_void);
+        unsafe {
+            PostMessageW(
+                Some(window),
+                SELF_CHECK_REPORT_MESSAGE,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        }
+        .map_err(|source| AppError::Windows {
+            operation: "PostMessageW self-check report",
+            source,
+        })
+    }
+
+    pub fn take_config_update(&self) -> AppResult<Option<Config>> {
+        let mut latest = None;
+        loop {
+            match self.settings_receiver.try_recv() {
+                Ok(config) => latest = Some(config),
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(latest),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Err(AppError::SettingsChannel);
+                }
+            }
+        }
+    }
+
     #[cfg(test)]
     pub fn disabled_for_test() -> Self {
         let (diagnostics_sender, _diagnostics_receiver) = mpsc::channel::<String>();
+        let (self_check_sender, _self_check_receiver) = mpsc::channel::<String>();
+        let (_settings_sender, settings_receiver) = mpsc::channel::<Config>();
         Self {
             exit_requested: Arc::new(AtomicBool::new(false)),
             diagnostics_enabled: Arc::new(AtomicBool::new(false)),
             diagnostics_sender,
+            self_check_requested: Arc::new(AtomicBool::new(false)),
+            self_check_sender,
+            settings_receiver,
             window: 0,
             thread: None,
         }
@@ -161,16 +226,28 @@ struct TrayThreadState {
     icon: HICON,
     instance: HINSTANCE,
     diagnostics: DiagnosticWindow,
+    settings: SettingsWindow,
+    self_check_requested: Arc<AtomicBool>,
+    self_check_receiver: Receiver<String>,
     error: Option<AppError>,
 }
 
-fn tray_thread(
+struct TrayThreadInputs {
     exit_requested: Arc<AtomicBool>,
     diagnostics_enabled: Arc<AtomicBool>,
     diagnostics_receiver: Receiver<String>,
+    self_check_requested: Arc<AtomicBool>,
+    self_check_receiver: Receiver<String>,
+    settings_sender: Sender<Config>,
+    config: Config,
+    config_path: PathBuf,
+}
+
+fn tray_thread(
+    inputs: TrayThreadInputs,
     ready_sender: SyncSender<AppResult<usize>>,
 ) -> AppResult<()> {
-    match initialize_tray(exit_requested, diagnostics_enabled, diagnostics_receiver) {
+    match initialize_tray(inputs) {
         Ok(resources) => {
             ready_sender
                 .send(Ok(resources.window.0 as usize))
@@ -197,11 +274,17 @@ struct TrayResources {
     state: *mut TrayThreadState,
 }
 
-fn initialize_tray(
-    exit_requested: Arc<AtomicBool>,
-    diagnostics_enabled: Arc<AtomicBool>,
-    diagnostics_receiver: Receiver<String>,
-) -> AppResult<TrayResources> {
+fn initialize_tray(inputs: TrayThreadInputs) -> AppResult<TrayResources> {
+    let TrayThreadInputs {
+        exit_requested,
+        diagnostics_enabled,
+        diagnostics_receiver,
+        self_check_requested,
+        self_check_receiver,
+        settings_sender,
+        config,
+        config_path,
+    } = inputs;
     let module = unsafe { GetModuleHandleW(None) }.map_err(|source| AppError::Windows {
         operation: "GetModuleHandleW",
         source,
@@ -225,6 +308,7 @@ fn initialize_tray(
         return Err(last_win32_error("RegisterClassW"));
     }
     DiagnosticWindow::register_class(instance, icon)?;
+    SettingsWindow::register_class(instance, icon)?;
 
     let state = Box::into_raw(Box::new(TrayThreadState {
         exit_requested,
@@ -232,6 +316,9 @@ fn initialize_tray(
         icon,
         instance,
         diagnostics: DiagnosticWindow::new(diagnostics_enabled, diagnostics_receiver),
+        settings: SettingsWindow::new(config_path, settings_sender, config),
+        self_check_requested,
+        self_check_receiver,
         error: None,
     }));
     let window = unsafe {
@@ -290,6 +377,7 @@ fn run_message_loop(resources: TrayResources) -> AppResult<()> {
 
     let state = unsafe { Box::from_raw(resources.state) };
     let state_error = state.error;
+    SettingsWindow::unregister_class(resources.instance)?;
     DiagnosticWindow::unregister_class(resources.instance)?;
     unsafe { UnregisterClassW(CLASS_NAME, Some(resources.instance)) }.map_err(|source| {
         AppError::Windows {
@@ -329,6 +417,12 @@ unsafe extern "system" fn tray_window_procedure(
         }
 
         match message {
+            SELF_CHECK_REPORT_MESSAGE => {
+                if let Err(error) = show_pending_self_check_report(window, state) {
+                    close_after_error(window, state, error);
+                }
+                return LRESULT(0);
+            }
             DIAGNOSTIC_EVENT_MESSAGE => {
                 if let Err(error) = state.diagnostics.drain_events() {
                     close_after_error(window, state, error);
@@ -339,9 +433,19 @@ unsafe extern "system" fn tray_window_procedure(
                 let event = lparam.0 as u32;
                 if event == WM_RBUTTONUP || event == WM_CONTEXTMENU || event == WM_LBUTTONUP {
                     match show_context_menu(window) {
+                        Ok(TrayCommand::OpenSettings) => {
+                            if let Err(error) = state.settings.open(state.instance) {
+                                close_after_error(window, state, error);
+                            }
+                        }
                         Ok(TrayCommand::OpenDiagnostics) => {
                             if let Err(error) = state.diagnostics.open(state.instance) {
                                 close_after_error(window, state, error);
+                            }
+                        }
+                        Ok(TrayCommand::StartSelfCheck) => {
+                            if show_self_check_instructions(window) {
+                                state.self_check_requested.store(true, Ordering::Release);
                             }
                         }
                         Ok(TrayCommand::Exit) => request_exit(window, state),
@@ -372,6 +476,9 @@ fn request_exit(window: HWND, state: &mut TrayThreadState) {
     if let Err(error) = state.diagnostics.close() {
         record_error(state, error);
     }
+    if let Err(error) = state.settings.close() {
+        record_error(state, error);
+    }
     if let Err(source) = unsafe { DestroyWindow(window) } {
         record_error(
             state,
@@ -400,12 +507,20 @@ fn record_error(state: &mut TrayThreadState, error: AppError) {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrayCommand {
     None,
+    OpenSettings,
     OpenDiagnostics,
+    StartSelfCheck,
     Exit,
 }
 
 fn show_context_menu(window: HWND) -> AppResult<TrayCommand> {
     let menu = Menu::create()?;
+    unsafe { AppendMenuW(menu.handle, MF_STRING, SETTINGS_MENU_ID, SETTINGS_LABEL) }.map_err(
+        |source| AppError::Windows {
+            operation: "AppendMenuW settings",
+            source,
+        },
+    )?;
     unsafe {
         AppendMenuW(
             menu.handle,
@@ -418,6 +533,12 @@ fn show_context_menu(window: HWND) -> AppResult<TrayCommand> {
         operation: "AppendMenuW diagnostics",
         source,
     })?;
+    unsafe { AppendMenuW(menu.handle, MF_STRING, SELF_CHECK_MENU_ID, SELF_CHECK_LABEL) }.map_err(
+        |source| AppError::Windows {
+            operation: "AppendMenuW self-check",
+            source,
+        },
+    )?;
     unsafe { AppendMenuW(menu.handle, MF_SEPARATOR, 0, PCWSTR::null()) }.map_err(|source| {
         AppError::Windows {
             operation: "AppendMenuW separator",
@@ -450,10 +571,52 @@ fn show_context_menu(window: HWND) -> AppResult<TrayCommand> {
         )
     };
     match selected.0 as usize {
+        SETTINGS_MENU_ID => Ok(TrayCommand::OpenSettings),
         DIAGNOSTICS_MENU_ID => Ok(TrayCommand::OpenDiagnostics),
+        SELF_CHECK_MENU_ID => Ok(TrayCommand::StartSelfCheck),
         EXIT_MENU_ID => Ok(TrayCommand::Exit),
         _ => Ok(TrayCommand::None),
     }
+}
+
+fn show_self_check_instructions(parent: HWND) -> bool {
+    let text = wide_string(
+        "После нажатия «ОК» у вас будет 3 секунды, чтобы вернуться в Lineage II.\r\n\r\nСамопроверка не управляет мышью и ничего не нажимает.",
+    );
+    let title = wide_string("res-bot — самопроверка");
+    (unsafe {
+        MessageBoxW(
+            Some(parent),
+            PCWSTR(text.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONINFORMATION,
+        )
+    }) == IDOK
+}
+
+fn show_pending_self_check_report(parent: HWND, state: &mut TrayThreadState) -> AppResult<()> {
+    let mut latest = None::<String>;
+    loop {
+        match state.self_check_receiver.try_recv() {
+            Ok(report) => latest = Some(report),
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                return Err(AppError::SelfCheckChannel);
+            }
+        }
+    }
+    let report = latest.ok_or(AppError::SelfCheckChannel)?;
+    let text = wide_string(&report);
+    let title = wide_string("res-bot — результат самопроверки");
+    unsafe {
+        MessageBoxW(
+            Some(parent),
+            PCWSTR(text.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_OK | MB_ICONINFORMATION,
+        );
+    }
+    Ok(())
 }
 
 struct Menu {
@@ -597,6 +760,10 @@ fn copy_wide_text(source: &str, destination: &mut [u16]) {
         .collect::<Vec<u16>>();
     destination[..encoded.len()].copy_from_slice(&encoded);
     destination[encoded.len()] = 0;
+}
+
+fn wide_string(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain([0]).collect()
 }
 
 fn last_win32_error(operation: &'static str) -> AppError {

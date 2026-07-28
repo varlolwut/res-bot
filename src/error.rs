@@ -14,6 +14,18 @@ pub enum AppError {
         source: toml::de::Error,
     },
 
+    #[error("configuration file could not be serialized: path={path}, reason={source}")]
+    ConfigSerialize {
+        path: String,
+        source: toml::ser::Error,
+    },
+
+    #[error("configuration file could not be written: path={path}, reason={source}")]
+    ConfigWrite {
+        path: String,
+        source: std::io::Error,
+    },
+
     #[error("configuration value is invalid: field={field}, value={value}, reason={reason}")]
     ConfigValue {
         field: &'static str,
@@ -58,6 +70,14 @@ pub enum AppError {
     #[error("mouse input was only partially sent: requested={requested}, sent={sent}")]
     PartialInput { requested: u32, sent: u32 },
 
+    #[error("virtual desktop bounds are invalid: x={x}, y={y}, width={width}, height={height}")]
+    InvalidVirtualDesktop {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    },
+
     #[error("embedded application icon is invalid: reason={reason}")]
     InvalidIcon { reason: String },
 
@@ -66,6 +86,12 @@ pub enum AppError {
 
     #[error("diagnostic event channel closed: event={event}")]
     DiagnosticChannel { event: String },
+
+    #[error("settings update channel closed")]
+    SettingsChannel,
+
+    #[error("self-check report channel closed")]
+    SelfCheckChannel,
 
     #[error(
         "Windows sent an invalid DPI change message: dpi={dpi}, suggested_rect={suggested_rect}"
