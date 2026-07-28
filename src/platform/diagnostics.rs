@@ -548,4 +548,3 @@ mod tests {
         assert!(!enabled.load(Ordering::Acquire));
     }
 }
-

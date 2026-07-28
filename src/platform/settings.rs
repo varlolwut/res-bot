@@ -668,4 +668,3 @@ mod tests {
         SettingsWindow::unregister_class(instance).unwrap();
     }
 }
-
