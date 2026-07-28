@@ -66,6 +66,11 @@ pub enum AppError {
 
     #[error("diagnostic event channel closed: event={event}")]
     DiagnosticChannel { event: String },
+
+    #[error(
+        "Windows sent an invalid DPI change message: dpi={dpi}, suggested_rect={suggested_rect}"
+    )]
+    InvalidDpiChange { dpi: u32, suggested_rect: isize },
 }
 
 pub type AppResult<T> = Result<T, AppError>;

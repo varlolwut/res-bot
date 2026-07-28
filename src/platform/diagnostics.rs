@@ -7,13 +7,15 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, GetSysColorBrush, InvalidateRect};
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     BS_PUSHBUTTON, CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, ES_AUTOVSCROLL,
     ES_MULTILINE, ES_READONLY, ES_WANTRETURN, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW,
-    HICON, HMENU, MoveWindow, SW_SHOWNOACTIVATE, SendMessageW, SetWindowLongPtrW, SetWindowTextW,
-    ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_COPY, WM_DESTROY,
-    WM_NCCREATE, WM_SIZE, WS_BORDER, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOPMOST,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
+    HICON, HMENU, MoveWindow, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_CLOSE, WM_COMMAND, WM_COPY, WM_DESTROY, WM_DPICHANGED, WM_NCCREATE, WM_SIZE, WS_BORDER,
+    WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOPMOST, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{PCWSTR, w};
 
@@ -34,6 +36,7 @@ const WINDOW_HEIGHT: i32 = 480;
 const PADDING: i32 = 12;
 const BUTTON_WIDTH: i32 = 126;
 const BUTTON_HEIGHT: i32 = 30;
+const DEFAULT_DPI: u32 = 96;
 const EM_SETSEL: u32 = 0x00B1;
 const EM_SCROLLCARET: u32 = 0x00B7;
 
@@ -46,6 +49,7 @@ pub struct DiagnosticWindow {
     copy_button: HWND,
     lines: VecDeque<String>,
     session_started: Option<Instant>,
+    dpi: u32,
 }
 
 impl DiagnosticWindow {
@@ -59,6 +63,7 @@ impl DiagnosticWindow {
             copy_button: null_window(),
             lines: VecDeque::new(),
             session_started: None,
+            dpi: DEFAULT_DPI,
         }
     }
 
@@ -67,6 +72,7 @@ impl DiagnosticWindow {
             lpfnWndProc: Some(diagnostic_window_procedure),
             hInstance: instance,
             hIcon: icon,
+            hbrBackground: unsafe { GetSysColorBrush(COLOR_WINDOW) },
             lpszClassName: CLASS_NAME,
             ..Default::default()
         };
@@ -120,6 +126,7 @@ impl DiagnosticWindow {
             source,
         })?;
         self.window = window;
+        self.dpi = unsafe { GetDpiForWindow(window) };
 
         let edit_style = WINDOW_STYLE(
             WS_CHILD.0
@@ -270,31 +277,68 @@ impl DiagnosticWindow {
             operation: "GetClientRect diagnostics",
             source,
         })?;
-        let width = (client.right - client.left).max(PADDING * 2 + BUTTON_WIDTH * 2);
-        let height = (client.bottom - client.top).max(PADDING * 3 + BUTTON_HEIGHT + 40);
-        let edit_height = height - PADDING * 3 - BUTTON_HEIGHT;
+        let padding = scale_dimension(PADDING, self.dpi);
+        let button_width = scale_dimension(BUTTON_WIDTH, self.dpi);
+        let button_height = scale_dimension(BUTTON_HEIGHT, self.dpi);
+        let minimum_edit_height = scale_dimension(40, self.dpi);
+        let width = (client.right - client.left).max(padding * 2 + button_width * 2);
+        let height =
+            (client.bottom - client.top).max(padding * 3 + button_height + minimum_edit_height);
+        let edit_height = height - padding * 3 - button_height;
         move_control(
             self.edit,
-            PADDING,
-            PADDING,
-            width - PADDING * 2,
+            padding,
+            padding,
+            width - padding * 2,
             edit_height,
         )?;
-        let buttons_y = PADDING * 2 + edit_height;
+        let buttons_y = padding * 2 + edit_height;
         move_control(
             self.copy_button,
-            width - PADDING - BUTTON_WIDTH,
+            width - padding - button_width,
             buttons_y,
-            BUTTON_WIDTH,
-            BUTTON_HEIGHT,
+            button_width,
+            button_height,
         )?;
         move_control(
             self.clear_button,
-            width - PADDING * 2 - BUTTON_WIDTH * 2,
+            width - padding * 2 - button_width * 2,
             buttons_y,
-            BUTTON_WIDTH,
-            BUTTON_HEIGHT,
-        )
+            button_width,
+            button_height,
+        )?;
+        if unsafe { InvalidateRect(Some(self.window), None, true) }.as_bool() {
+            Ok(())
+        } else {
+            Err(last_win32_error("InvalidateRect diagnostics"))
+        }
+    }
+
+    fn apply_dpi_change(&mut self, dpi: u32, suggested_rect: isize) -> AppResult<()> {
+        if dpi == 0 || suggested_rect == 0 {
+            return Err(AppError::InvalidDpiChange {
+                dpi,
+                suggested_rect,
+            });
+        }
+        let rect = unsafe { &*(suggested_rect as *const RECT) };
+        self.dpi = dpi;
+        unsafe {
+            SetWindowPos(
+                self.window,
+                None,
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            )
+        }
+        .map_err(|source| AppError::Windows {
+            operation: "SetWindowPos diagnostics DPI change",
+            source,
+        })?;
+        self.layout()
     }
 
     fn handle_destroyed(&mut self) {
@@ -343,6 +387,15 @@ unsafe extern "system" fn diagnostic_window_procedure(
             WM_SIZE => {
                 if let Err(error) = state.layout() {
                     write_debug_warning(&format!("failed to resize diagnostics: error={error}"));
+                }
+                return LRESULT(0);
+            }
+            WM_DPICHANGED => {
+                let dpi = (wparam.0 & 0xffff) as u32;
+                if let Err(error) = state.apply_dpi_change(dpi, lparam.0) {
+                    write_debug_warning(&format!(
+                        "failed to apply diagnostics DPI change: error={error}"
+                    ));
                 }
                 return LRESULT(0);
             }
@@ -407,6 +460,11 @@ fn move_control(window: HWND, x: i32, y: i32, width: i32, height: i32) -> AppRes
     })
 }
 
+fn scale_dimension(value: i32, dpi: u32) -> i32 {
+    ((i64::from(value) * i64::from(dpi) + i64::from(DEFAULT_DPI / 2)) / i64::from(DEFAULT_DPI))
+        as i32
+}
+
 fn last_win32_error(operation: &'static str) -> AppError {
     AppError::Win32 {
         operation,
@@ -429,11 +487,19 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
 
-    use windows::Win32::Foundation::{HINSTANCE, HMODULE};
+    use windows::Win32::Foundation::{HINSTANCE, HMODULE, RECT};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::UI::WindowsAndMessaging::HICON;
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, HICON};
 
     use super::DiagnosticWindow;
+    use super::scale_dimension;
+
+    #[test]
+    fn dimensions_scale_for_monitor_dpi() {
+        assert_eq!(scale_dimension(12, 96), 12);
+        assert_eq!(scale_dimension(12, 144), 18);
+        assert_eq!(scale_dimension(30, 192), 60);
+    }
 
     #[test]
     fn diagnostic_window_opens_renders_event_and_closes() {
@@ -447,14 +513,35 @@ mod tests {
         diagnostics.open(instance).unwrap();
         sender.send("test diagnostic event".to_owned()).unwrap();
         diagnostics.drain_events().unwrap();
+        let suggested_rect = RECT {
+            left: 160,
+            top: 160,
+            right: 760,
+            bottom: 520,
+        };
+        diagnostics
+            .apply_dpi_change(144, ptr::from_ref(&suggested_rect) as isize)
+            .unwrap();
 
         assert!(enabled.load(Ordering::Acquire));
+        assert_eq!(diagnostics.dpi, 144);
         assert!(
             diagnostics
                 .lines
                 .iter()
                 .any(|line| line.contains("test diagnostic event"))
         );
+        let mut window_rect = RECT::default();
+        let mut clear_rect = RECT::default();
+        let mut copy_rect = RECT::default();
+        unsafe {
+            GetWindowRect(diagnostics.window, &mut window_rect).unwrap();
+            GetWindowRect(diagnostics.clear_button, &mut clear_rect).unwrap();
+            GetWindowRect(diagnostics.copy_button, &mut copy_rect).unwrap();
+        }
+        assert!(clear_rect.right < copy_rect.left);
+        assert!(clear_rect.bottom <= window_rect.bottom);
+        assert!(copy_rect.bottom <= window_rect.bottom);
 
         diagnostics.close().unwrap();
         DiagnosticWindow::unregister_class(instance).unwrap();

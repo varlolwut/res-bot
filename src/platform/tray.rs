@@ -33,7 +33,7 @@ const ICON_SIZE: i32 = 16;
 const ICON_RESOURCE_VERSION: u32 = 0x0003_0000;
 const CLASS_NAME: PCWSTR = w!("res-bot-tray-window");
 const WINDOW_NAME: PCWSTR = w!("res-bot");
-const DIAGNOSTICS_LABEL: PCWSTR = w!("Диагностика…");
+const DIAGNOSTICS_LABEL: PCWSTR = w!("Диагностика");
 const EXIT_LABEL: PCWSTR = w!("Выход");
 const TASKBAR_CREATED: PCWSTR = w!("TaskbarCreated");
 
