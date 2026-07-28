@@ -68,6 +68,8 @@ pub fn choose_action(percentage: ResurrectionPercentage, numbered_nickname: bool
 
 #[cfg(test)]
 mod tests {
+    use crate::error::AppError;
+
     use super::{
         Action, ResurrectionPercentage, choose_action, has_numbered_nickname, parse_percentage,
     };
@@ -82,6 +84,13 @@ mod tests {
             parse_percentage("персонажа 0 (0%). Вы согласны?").unwrap(),
             Some(ResurrectionPercentage::Zero)
         );
+    }
+
+    #[test]
+    fn conflicting_percentages_are_reported_explicitly() {
+        let error = parse_percentage("0% and 100%").unwrap_err();
+
+        assert!(matches!(error, AppError::ConflictingPercentage { .. }));
     }
 
     #[test]
@@ -105,3 +114,4 @@ mod tests {
         );
     }
 }
+

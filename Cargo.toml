@@ -1,6 +1,6 @@
 [package]
 name = "res-bot"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Screen-only resurrection dialog assistant for Lineage II on Windows"
@@ -33,3 +33,4 @@ codegen-units = 1
 lto = "thin"
 panic = "abort"
 strip = true
+

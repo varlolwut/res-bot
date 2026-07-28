@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, SyncSender};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::thread::{self, JoinHandle};
 
 use windows::Win32::Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -13,29 +13,34 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CREATESTRUCTW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW,
     DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
-    GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, LR_DEFAULTCOLOR, MF_STRING, MSG,
-    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
-    SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
-    UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY,
-    WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP, WM_USER, WNDCLASSW,
+    GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, LR_DEFAULTCOLOR, MF_SEPARATOR, MF_STRING,
+    MSG, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+    SetForegroundWindow, SetWindowLongPtrW, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    TranslateMessage, UnregisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU,
+    WM_DESTROY, WM_LBUTTONUP, WM_NCCREATE, WM_RBUTTONUP, WM_USER, WNDCLASSW,
 };
 use windows::core::{PCWSTR, w};
 
 use crate::error::{AppError, AppResult};
-use crate::platform::{tray_icon::ICON_BYTES, write_debug_warning};
+use crate::platform::{diagnostics::DiagnosticWindow, tray_icon::ICON_BYTES, write_debug_warning};
 
 const TRAY_ICON_ID: u32 = 1;
-const EXIT_MENU_ID: usize = 1;
+const DIAGNOSTICS_MENU_ID: usize = 1;
+const EXIT_MENU_ID: usize = 2;
 const TRAY_CALLBACK_MESSAGE: u32 = WM_USER + 1;
+const DIAGNOSTIC_EVENT_MESSAGE: u32 = WM_USER + 2;
 const ICON_SIZE: i32 = 16;
 const ICON_RESOURCE_VERSION: u32 = 0x0003_0000;
 const CLASS_NAME: PCWSTR = w!("res-bot-tray-window");
 const WINDOW_NAME: PCWSTR = w!("res-bot");
+const DIAGNOSTICS_LABEL: PCWSTR = w!("Диагностика…");
 const EXIT_LABEL: PCWSTR = w!("Выход");
 const TASKBAR_CREATED: PCWSTR = w!("TaskbarCreated");
 
 pub struct TrayConnector {
     exit_requested: Arc<AtomicBool>,
+    diagnostics_enabled: Arc<AtomicBool>,
+    diagnostics_sender: Sender<String>,
     window: usize,
     thread: Option<JoinHandle<AppResult<()>>>,
 }
@@ -44,8 +49,18 @@ impl TrayConnector {
     pub fn start() -> AppResult<Self> {
         let exit_requested = Arc::new(AtomicBool::new(false));
         let thread_exit_requested = Arc::clone(&exit_requested);
+        let diagnostics_enabled = Arc::new(AtomicBool::new(false));
+        let thread_diagnostics_enabled = Arc::clone(&diagnostics_enabled);
+        let (diagnostics_sender, diagnostics_receiver) = mpsc::channel::<String>();
         let (ready_sender, ready_receiver) = mpsc::sync_channel::<AppResult<usize>>(1);
-        let thread = thread::spawn(move || tray_thread(thread_exit_requested, ready_sender));
+        let thread = thread::spawn(move || {
+            tray_thread(
+                thread_exit_requested,
+                thread_diagnostics_enabled,
+                diagnostics_receiver,
+                ready_sender,
+            )
+        });
         let window = ready_receiver
             .recv()
             .map_err(|source| AppError::TrayThread {
@@ -54,6 +69,8 @@ impl TrayConnector {
 
         Ok(Self {
             exit_requested,
+            diagnostics_enabled,
+            diagnostics_sender,
             window,
             thread: Some(thread),
         })
@@ -61,6 +78,37 @@ impl TrayConnector {
 
     pub fn exit_requested(&self) -> bool {
         self.exit_requested.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub fn disabled_for_test() -> Self {
+        let (diagnostics_sender, _diagnostics_receiver) = mpsc::channel::<String>();
+        Self {
+            exit_requested: Arc::new(AtomicBool::new(false)),
+            diagnostics_enabled: Arc::new(AtomicBool::new(false)),
+            diagnostics_sender,
+            window: 0,
+            thread: None,
+        }
+    }
+
+    pub fn log_diagnostic<F>(&self, create_message: F) -> AppResult<()>
+    where
+        F: FnOnce() -> String,
+    {
+        if !self.diagnostics_enabled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let message = create_message();
+        self.diagnostics_sender
+            .send(message)
+            .map_err(|source| AppError::DiagnosticChannel { event: source.0 })?;
+        let window = HWND(self.window as *mut c_void);
+        unsafe { PostMessageW(Some(window), DIAGNOSTIC_EVENT_MESSAGE, WPARAM(0), LPARAM(0)) }
+            .map_err(|source| AppError::Windows {
+                operation: "PostMessageW diagnostics",
+                source,
+            })
     }
 
     pub fn shutdown(mut self) -> AppResult<()> {
@@ -111,14 +159,18 @@ struct TrayThreadState {
     exit_requested: Arc<AtomicBool>,
     taskbar_created_message: u32,
     icon: HICON,
+    instance: HINSTANCE,
+    diagnostics: DiagnosticWindow,
     error: Option<AppError>,
 }
 
 fn tray_thread(
     exit_requested: Arc<AtomicBool>,
+    diagnostics_enabled: Arc<AtomicBool>,
+    diagnostics_receiver: Receiver<String>,
     ready_sender: SyncSender<AppResult<usize>>,
 ) -> AppResult<()> {
-    match initialize_tray(exit_requested) {
+    match initialize_tray(exit_requested, diagnostics_enabled, diagnostics_receiver) {
         Ok(resources) => {
             ready_sender
                 .send(Ok(resources.window.0 as usize))
@@ -145,7 +197,11 @@ struct TrayResources {
     state: *mut TrayThreadState,
 }
 
-fn initialize_tray(exit_requested: Arc<AtomicBool>) -> AppResult<TrayResources> {
+fn initialize_tray(
+    exit_requested: Arc<AtomicBool>,
+    diagnostics_enabled: Arc<AtomicBool>,
+    diagnostics_receiver: Receiver<String>,
+) -> AppResult<TrayResources> {
     let module = unsafe { GetModuleHandleW(None) }.map_err(|source| AppError::Windows {
         operation: "GetModuleHandleW",
         source,
@@ -168,11 +224,14 @@ fn initialize_tray(exit_requested: Arc<AtomicBool>) -> AppResult<TrayResources> 
     if atom == 0 {
         return Err(last_win32_error("RegisterClassW"));
     }
+    DiagnosticWindow::register_class(instance, icon)?;
 
     let state = Box::into_raw(Box::new(TrayThreadState {
         exit_requested,
         taskbar_created_message,
         icon,
+        instance,
+        diagnostics: DiagnosticWindow::new(diagnostics_enabled, diagnostics_receiver),
         error: None,
     }));
     let window = unsafe {
@@ -231,6 +290,7 @@ fn run_message_loop(resources: TrayResources) -> AppResult<()> {
 
     let state = unsafe { Box::from_raw(resources.state) };
     let state_error = state.error;
+    DiagnosticWindow::unregister_class(resources.instance)?;
     unsafe { UnregisterClassW(CLASS_NAME, Some(resources.instance)) }.map_err(|source| {
         AppError::Windows {
             operation: "UnregisterClassW",
@@ -269,12 +329,23 @@ unsafe extern "system" fn tray_window_procedure(
         }
 
         match message {
+            DIAGNOSTIC_EVENT_MESSAGE => {
+                if let Err(error) = state.diagnostics.drain_events() {
+                    close_after_error(window, state, error);
+                }
+                return LRESULT(0);
+            }
             TRAY_CALLBACK_MESSAGE => {
                 let event = lparam.0 as u32;
                 if event == WM_RBUTTONUP || event == WM_CONTEXTMENU || event == WM_LBUTTONUP {
                     match show_context_menu(window) {
-                        Ok(true) => request_exit(window, state),
-                        Ok(false) => {}
+                        Ok(TrayCommand::OpenDiagnostics) => {
+                            if let Err(error) = state.diagnostics.open(state.instance) {
+                                close_after_error(window, state, error);
+                            }
+                        }
+                        Ok(TrayCommand::Exit) => request_exit(window, state),
+                        Ok(TrayCommand::None) => {}
                         Err(error) => close_after_error(window, state, error),
                     }
                 }
@@ -298,6 +369,9 @@ unsafe extern "system" fn tray_window_procedure(
 
 fn request_exit(window: HWND, state: &mut TrayThreadState) {
     state.exit_requested.store(true, Ordering::Release);
+    if let Err(error) = state.diagnostics.close() {
+        record_error(state, error);
+    }
     if let Err(source) = unsafe { DestroyWindow(window) } {
         record_error(
             state,
@@ -323,8 +397,33 @@ fn record_error(state: &mut TrayThreadState, error: AppError) {
     }
 }
 
-fn show_context_menu(window: HWND) -> AppResult<bool> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrayCommand {
+    None,
+    OpenDiagnostics,
+    Exit,
+}
+
+fn show_context_menu(window: HWND) -> AppResult<TrayCommand> {
     let menu = Menu::create()?;
+    unsafe {
+        AppendMenuW(
+            menu.handle,
+            MF_STRING,
+            DIAGNOSTICS_MENU_ID,
+            DIAGNOSTICS_LABEL,
+        )
+    }
+    .map_err(|source| AppError::Windows {
+        operation: "AppendMenuW diagnostics",
+        source,
+    })?;
+    unsafe { AppendMenuW(menu.handle, MF_SEPARATOR, 0, PCWSTR::null()) }.map_err(|source| {
+        AppError::Windows {
+            operation: "AppendMenuW separator",
+            source,
+        }
+    })?;
     unsafe { AppendMenuW(menu.handle, MF_STRING, EXIT_MENU_ID, EXIT_LABEL) }.map_err(|source| {
         AppError::Windows {
             operation: "AppendMenuW",
@@ -350,7 +449,11 @@ fn show_context_menu(window: HWND) -> AppResult<bool> {
             None,
         )
     };
-    Ok(selected.0 as usize == EXIT_MENU_ID)
+    match selected.0 as usize {
+        DIAGNOSTICS_MENU_ID => Ok(TrayCommand::OpenDiagnostics),
+        EXIT_MENU_ID => Ok(TrayCommand::Exit),
+        _ => Ok(TrayCommand::None),
+    }
 }
 
 struct Menu {
@@ -533,3 +636,4 @@ mod tests {
         assert_eq!(destination[7], 0);
     }
 }
+

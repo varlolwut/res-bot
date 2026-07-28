@@ -14,6 +14,7 @@ use crate::image::{Point, Rect};
 pub struct GameWindow {
     pub handle: HWND,
     pub screen_bounds: Rect,
+    pub title: String,
 }
 
 pub fn initialize_dpi_awareness() -> AppResult<()> {
@@ -43,6 +44,7 @@ pub fn matching_foreground_window(title_fragments: &[String]) -> AppResult<Optio
     Ok(Some(GameWindow {
         handle,
         screen_bounds: client_screen_bounds(handle)?,
+        title,
     }))
 }
 
@@ -100,3 +102,4 @@ impl GameWindow {
         }
     }
 }
+

@@ -12,6 +12,12 @@ use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
 use crate::error::{AppError, AppResult};
 use crate::image::{Point, Rect};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClickOutcome {
+    pub target: Point,
+    pub duration_ms: u64,
+}
+
 pub fn stop_shortcut_pressed() -> bool {
     key_pressed(VK_CONTROL.0) && key_pressed(VK_SHIFT.0) && key_pressed(VK_F12.0)
 }
@@ -21,13 +27,17 @@ pub fn click_human_like(
     frame_origin: Point,
     minimum_duration_ms: u64,
     maximum_duration_ms: u64,
-) -> AppResult<()> {
+) -> AppResult<ClickOutcome> {
     let mut random = rand::rng();
     let target = random_point_in_button(button, frame_origin, &mut random);
     let start = cursor_position()?;
     let duration_ms = random.random_range(minimum_duration_ms..=maximum_duration_ms);
     move_cursor_bezier(start, target, duration_ms, &mut random)?;
-    send_left_click()
+    send_left_click()?;
+    Ok(ClickOutcome {
+        target,
+        duration_ms,
+    })
 }
 
 fn key_pressed(virtual_key: u16) -> bool {
@@ -168,3 +178,4 @@ mod tests {
         assert_eq!(cubic_bezier(start, first, second, end, 1.0), end);
     }
 }
+

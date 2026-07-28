@@ -63,6 +63,10 @@ pub enum AppError {
 
     #[error("tray thread failed: reason={reason}")]
     TrayThread { reason: String },
+
+    #[error("diagnostic event channel closed: event={event}")]
+    DiagnosticChannel { event: String },
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+

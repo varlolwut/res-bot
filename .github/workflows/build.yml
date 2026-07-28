@@ -25,20 +25,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Materialize generated logo
-        if: hashFiles('assets/res-bot-icon.png.base64') != ''
-        shell: pwsh
-        run: |
-          $encoded = Get-Content assets/res-bot-icon.png.base64 -Raw
-          $bytes = [Convert]::FromBase64String($encoded)
-          [IO.File]::WriteAllBytes('assets/res-bot-icon.png', $bytes)
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git rm assets/res-bot-icon.png.base64
-          git add assets/res-bot-icon.png
-          git commit -m "Materialize generated logo asset"
-          git push
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -79,3 +65,4 @@ jobs:
             --target "${{ github.sha }}" `
             --title "res-bot $tag" `
             --generate-notes
+
