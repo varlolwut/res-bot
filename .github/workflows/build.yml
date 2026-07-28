@@ -59,20 +59,33 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = if ("${{ inputs.release_tag }}") {
             "${{ inputs.release_tag }}"
-          } else {
+          } elseif ("${{ github.ref }}".StartsWith("refs/tags/v")) {
             "${{ github.ref_name }}"
+          } else {
+            $manifest = Get-Content Cargo.toml -Raw
+            $version = [regex]::Match($manifest, '(?m)^version = "([^"]+)"$')
+            if (-not $version.Success) {
+              throw "Package version was not found in Cargo.toml"
+            }
+            "v$($version.Groups[1].Value)"
           }
-          gh release create $tag `
-            target/release/far_nav.exe `
-            target/release/SHA256SUMS.txt `
-            --target "${{ github.sha }}" `
-            --title "res-bot $tag" `
-            --generate-notes
-
+          if (gh release view $tag *> $null) {
+            gh release upload $tag `
+              target/release/far_nav.exe `
+              target/release/SHA256SUMS.txt `
+              --clobber
+          } else {
+            gh release create $tag `
+              target/release/far_nav.exe `
+              target/release/SHA256SUMS.txt `
+              --target "${{ github.sha }}" `
+              --title "res-bot $tag" `
+              --generate-notes
+          }
