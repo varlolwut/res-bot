@@ -1,0 +1,12 @@
+# FarNav example configuration
+window_title_fragments = ["lineage"]
+poll_interval_seconds = 10
+click_min_duration_ms = 280
+click_max_duration_ms = 650
+pre_click_min_delay_ms = 180
+pre_click_max_delay_ms = 480
+confirmation_frame_count = 2
+confirmation_interval_ms = 150
+mouse_idle_required_ms = 600
+mouse_idle_timeout_ms = 3000
+relocate_cursor_after_click = true

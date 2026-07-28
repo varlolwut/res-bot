@@ -4,7 +4,7 @@ use std::path::PathBuf;
 fn main() {
     let manifest_directory =
         env::var_os("CARGO_MANIFEST_DIR").expect("Cargo must provide CARGO_MANIFEST_DIR");
-    let manifest_path = PathBuf::from(manifest_directory).join("res-bot.manifest");
+    let manifest_path = PathBuf::from(manifest_directory).join("farnav.manifest");
 
     println!("cargo:rerun-if-changed={}", manifest_path.display());
     println!("cargo:rerun-if-env-changed=PROFILE");

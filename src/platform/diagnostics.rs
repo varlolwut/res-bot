@@ -22,8 +22,8 @@ use windows::core::{PCWSTR, w};
 use crate::error::{AppError, AppResult};
 use crate::platform::write_debug_warning;
 
-const CLASS_NAME: PCWSTR = w!("res-bot-diagnostics-window");
-const WINDOW_NAME: PCWSTR = w!("res-bot — диагностика (запись включена)");
+const CLASS_NAME: PCWSTR = w!("farnav-diagnostics-window");
+const WINDOW_NAME: PCWSTR = w!("FarNav — диагностика (запись включена)");
 const EDIT_CLASS: PCWSTR = w!("EDIT");
 const BUTTON_CLASS: PCWSTR = w!("BUTTON");
 const CLEAR_LABEL: PCWSTR = w!("Очистить");

@@ -21,8 +21,8 @@ use crate::config::{Config, TargetMode};
 use crate::error::{AppError, AppResult};
 use crate::platform::write_debug_warning;
 
-const CLASS_NAME: PCWSTR = w!("res-bot-settings-window");
-const WINDOW_NAME: PCWSTR = w!("res-bot — настройки");
+const CLASS_NAME: PCWSTR = w!("farnav-settings-window");
+const WINDOW_NAME: PCWSTR = w!("FarNav — настройки");
 const STATIC_CLASS: PCWSTR = w!("STATIC");
 const EDIT_CLASS: PCWSTR = w!("EDIT");
 const BUTTON_CLASS: PCWSTR = w!("BUTTON");
@@ -597,7 +597,7 @@ fn show_settings_error(parent: HWND, error: &AppError) {
     let text = wide_string(&format!(
         "Настройки не сохранены.\r\n\r\n{error}\r\n\r\nИсправьте значение и повторите."
     ));
-    let title = wide_string("res-bot — ошибка настроек");
+    let title = wide_string("FarNav — ошибка настроек");
     unsafe {
         MessageBoxW(
             Some(parent),
@@ -655,7 +655,7 @@ mod tests {
         let module: HMODULE = unsafe { GetModuleHandleW(None) }.unwrap();
         let instance = HINSTANCE(module.0);
         let (sender, _receiver) = mpsc::channel::<Config>();
-        let path = env::temp_dir().join("res-bot-settings-test.toml");
+        let path = env::temp_dir().join("farnav-settings-test.toml");
         let mut settings = SettingsWindow::new(path, sender, Config::built_in());
 
         SettingsWindow::register_class(instance, HICON(ptr::null_mut())).unwrap();

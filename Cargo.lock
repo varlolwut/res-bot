@@ -15,6 +15,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "farnav"
+version = "0.3.2"
+dependencies = [
+ "rand",
+ "serde",
+ "thiserror",
+ "toml",
+ "windows",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -108,17 +119,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom",
-]
-
-[[package]]
-name = "res-bot"
-version = "0.3.1"
-dependencies = [
- "rand",
- "serde",
- "thiserror",
- "toml",
- "windows",
 ]
 
 [[package]]

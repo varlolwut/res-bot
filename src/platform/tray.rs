@@ -42,8 +42,8 @@ const DIAGNOSTIC_EVENT_MESSAGE: u32 = WM_USER + 2;
 const SELF_CHECK_REPORT_MESSAGE: u32 = WM_USER + 3;
 const ICON_SIZE: i32 = 16;
 const ICON_RESOURCE_VERSION: u32 = 0x0003_0000;
-const CLASS_NAME: PCWSTR = w!("res-bot-tray-window");
-const WINDOW_NAME: PCWSTR = w!("res-bot");
+const CLASS_NAME: PCWSTR = w!("farnav-tray-window");
+const WINDOW_NAME: PCWSTR = w!("FarNav");
 const SETTINGS_LABEL: PCWSTR = w!("Настройки");
 const DIAGNOSTICS_LABEL: PCWSTR = w!("Диагностика");
 const SELF_CHECK_LABEL: PCWSTR = w!("Самопроверка");
@@ -643,7 +643,7 @@ fn show_self_check_instructions(parent: HWND) -> bool {
     let text = wide_string(
         "После нажатия «ОК» у вас будет 3 секунды, чтобы вернуться в выбранное целевое окно.\r\n\r\nСамопроверка не управляет мышью и ничего не нажимает.",
     );
-    let title = wide_string("res-bot — самопроверка");
+    let title = wide_string("FarNav — самопроверка");
     (unsafe {
         MessageBoxW(
             Some(parent),
@@ -667,7 +667,7 @@ fn show_pending_self_check_report(parent: HWND, state: &mut TrayThreadState) -> 
     }
     let report = latest.ok_or(AppError::SelfCheckChannel)?;
     let text = wide_string(&report);
-    let title = wide_string("res-bot — результат самопроверки");
+    let title = wide_string("FarNav — результат самопроверки");
     unsafe {
         MessageBoxW(
             Some(parent),
@@ -714,7 +714,7 @@ impl Drop for Menu {
 
 fn add_tray_icon(window: HWND, icon: HICON) -> AppResult<()> {
     let mut data = tray_icon_data(window, icon);
-    copy_wide_text("res-bot — помощник воскрешения", &mut data.szTip);
+    copy_wide_text("FarNav — помощник воскрешения", &mut data.szTip);
     if !unsafe { Shell_NotifyIconW(NIM_ADD, &data) }.as_bool() {
         return Err(last_win32_error("Shell_NotifyIconW NIM_ADD"));
     }

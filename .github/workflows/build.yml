@@ -43,18 +43,25 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      - name: Package release executable
+        shell: pwsh
+        run: |
+          Copy-Item `
+            target/release/farnav-screen-assistant.exe `
+            target/release/FarNav.ScreenAssistant.exe
+
       - name: Generate checksum
         shell: pwsh
         run: |
-          $hash = (Get-FileHash target/release/far_nav.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  far_nav.exe" | Set-Content target/release/SHA256SUMS.txt -Encoding ascii
+          $hash = (Get-FileHash target/release/FarNav.ScreenAssistant.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  FarNav.ScreenAssistant.exe" | Set-Content target/release/SHA256SUMS.txt -Encoding ascii
 
       - name: Upload release files
         uses: actions/upload-artifact@v4
         with:
-          name: res-bot-windows-x64
+          name: farnav-windows-x64
           path: |
-            target/release/far_nav.exe
+            target/release/FarNav.ScreenAssistant.exe
             target/release/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -74,14 +81,14 @@ jobs:
           }
           if (gh release view $tag *> $null) {
             gh release upload $tag `
-              target/release/far_nav.exe `
+              target/release/FarNav.ScreenAssistant.exe `
               target/release/SHA256SUMS.txt `
               --clobber
           } else {
             gh release create $tag `
-              target/release/far_nav.exe `
+              target/release/FarNav.ScreenAssistant.exe `
               target/release/SHA256SUMS.txt `
               --target "${{ github.sha }}" `
-              --title "res-bot $tag" `
+              --title "FarNav $tag" `
               --generate-notes
           }

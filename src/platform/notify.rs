@@ -3,13 +3,13 @@ use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
 use windows::core::PCWSTR;
 
 pub fn write_debug_warning(message: &str) {
-    let wide = wide_string(&format!("res-bot warning: {message}"));
+    let wide = wide_string(&format!("FarNav warning: {message}"));
     unsafe { OutputDebugStringW(PCWSTR(wide.as_ptr())) };
 }
 
 pub fn show_fatal_error(message: &str) {
     let body = wide_string(message);
-    let title = wide_string("res-bot — ошибка");
+    let title = wide_string("FarNav — ошибка");
     let _ = unsafe {
         MessageBoxW(
             None,

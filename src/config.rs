@@ -229,7 +229,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let executable = env::temp_dir().join(format!("res-bot-config-{unique}.exe"));
+        let executable = env::temp_dir().join(format!("farnav-config-{unique}.exe"));
         let path = Config::path_for_executable(&executable);
         let config = Config::built_in();
 

@@ -521,14 +521,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "set RES_BOT_RAW_FRAME, RES_BOT_FRAME_WIDTH and RES_BOT_FRAME_HEIGHT"]
+    #[ignore = "set FARNAV_RAW_FRAME, FARNAV_FRAME_WIDTH and FARNAV_FRAME_HEIGHT"]
     fn analyzes_external_reference_frame() {
-        let path = env::var("RES_BOT_RAW_FRAME").unwrap();
-        let width = env::var("RES_BOT_FRAME_WIDTH")
+        let path = env::var("FARNAV_RAW_FRAME").unwrap();
+        let width = env::var("FARNAV_FRAME_WIDTH")
             .unwrap()
             .parse::<u32>()
             .unwrap();
-        let height = env::var("RES_BOT_FRAME_HEIGHT")
+        let height = env::var("FARNAV_FRAME_HEIGHT")
             .unwrap()
             .parse::<u32>()
             .unwrap();

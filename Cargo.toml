@@ -1,13 +1,13 @@
 [package]
-name = "res-bot"
-version = "0.3.1"
+name = "farnav"
+version = "0.3.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Screen-only resurrection dialog assistant for Lineage II on Windows"
 license = "MIT"
 
 [[bin]]
-name = "far_nav"
+name = "farnav-screen-assistant"
 path = "src/main.rs"
 
 [dependencies]

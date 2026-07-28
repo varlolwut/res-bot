@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(not(target_os = "windows"))]
-compile_error!("res-bot supports Windows only");
+compile_error!("FarNav supports Windows only");
 
 mod config;
 mod decision;
@@ -812,7 +812,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "set RES_BOT_RAW_FRAME, RES_BOT_FRAME_WIDTH and RES_BOT_FRAME_HEIGHT"]
+    #[ignore = "set FARNAV_RAW_FRAME, FARNAV_FRAME_WIDTH and FARNAV_FRAME_HEIGHT"]
     fn recognizes_external_zero_percent_reference_frame() {
         let frame = external_reference_frame();
         let dialog = find_resurrection_dialog(&frame).unwrap();
@@ -833,7 +833,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "set RES_BOT_RAW_FRAME, RES_BOT_FRAME_WIDTH and RES_BOT_FRAME_HEIGHT"]
+    #[ignore = "set FARNAV_RAW_FRAME, FARNAV_FRAME_WIDTH and FARNAV_FRAME_HEIGHT"]
     fn recognizes_external_hundred_percent_reference_frame() {
         let frame = external_reference_frame();
         let dialog = find_resurrection_dialog(&frame).unwrap();
@@ -847,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "set RES_BOT_RAW_FRAME, RES_BOT_FRAME_WIDTH and RES_BOT_FRAME_HEIGHT"]
+    #[ignore = "set FARNAV_RAW_FRAME, FARNAV_FRAME_WIDTH and FARNAV_FRAME_HEIGHT"]
     fn recognizes_external_numbered_player_panel() {
         let frame = external_reference_frame();
         let ocr = OcrConnector::new("ru-RU").unwrap();
@@ -859,12 +859,12 @@ mod tests {
     }
 
     fn external_reference_frame() -> Frame {
-        let path = env::var("RES_BOT_RAW_FRAME").unwrap();
-        let width = env::var("RES_BOT_FRAME_WIDTH")
+        let path = env::var("FARNAV_RAW_FRAME").unwrap();
+        let width = env::var("FARNAV_FRAME_WIDTH")
             .unwrap()
             .parse::<u32>()
             .unwrap();
-        let height = env::var("RES_BOT_FRAME_HEIGHT")
+        let height = env::var("FARNAV_FRAME_HEIGHT")
             .unwrap()
             .parse::<u32>()
             .unwrap();
