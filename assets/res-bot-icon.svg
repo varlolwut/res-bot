@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
-  <title id="title">res-bot</title>
-  <desc id="description">Зелёная искра воскрешения над золотым сердцем</desc>
-  <circle cx="256" cy="256" r="224" fill="#171b1a" stroke="#d7a93f" stroke-width="24"/>
-  <path d="M256 412c-28-39-106-92-106-166 0-54 38-91 88-91 33 0 58 18 74 45 16-27 41-45 74-45 50 0 88 37 88 91 0 74-78 127-106 166l-56 70z" fill="#d7a93f" transform="translate(-56 -32)"/>
-  <path d="M256 329c-44-31-61-75-46-119 12-35 42-58 65-85 21-25 34-52 31-89 54 49 75 104 54 151-13 29-37 48-65 57 16 22 18 51 6 78-10 22-27 38-45 49 8-15 9-29 0-42z" fill="#21b86b"/>
-  <path d="M284 118c-5 35 5 65 31 89-28 10-48 29-60 57-8-52 1-98 29-146z" fill="#effff6"/>
-</svg>
