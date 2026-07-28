@@ -1,6 +1,8 @@
 # res-bot
 
-![Логотип res-bot](assets/res-bot-icon.svg)
+<p align="center">
+  <img src="assets/res-bot-icon.svg" width="128" height="128" alt="Логотип res-bot">
+</p>
 
 `res-bot` — фоновый Windows-помощник для диалога воскрешения в Lineage II. Он
 анализирует только изображение активного окна игры и управляет обычным курсором

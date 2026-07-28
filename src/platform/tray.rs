@@ -231,15 +231,15 @@ fn run_message_loop(resources: TrayResources) -> AppResult<()> {
 
     let state = unsafe { Box::from_raw(resources.state) };
     let state_error = state.error;
-    unsafe { DestroyIcon(resources.icon) }.map_err(|source| AppError::Windows {
-        operation: "DestroyIcon",
-        source,
-    })?;
     unsafe { UnregisterClassW(CLASS_NAME, Some(resources.instance)) }.map_err(|source| {
         AppError::Windows {
             operation: "UnregisterClassW",
             source,
         }
+    })?;
+    unsafe { DestroyIcon(resources.icon) }.map_err(|source| AppError::Windows {
+        operation: "DestroyIcon",
+        source,
     })?;
     state_error.map_or(Ok(()), Err)
 }
