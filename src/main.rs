@@ -22,7 +22,7 @@ use crate::detection::{DialogCandidate, find_player_panel_regions, find_resurrec
 use crate::error::AppResult;
 use crate::image::Frame;
 use crate::platform::{
-    OcrConnector, capture_window, click_human_like, initialize_dpi_awareness,
+    OcrConnector, TrayConnector, capture_window, click_human_like, initialize_dpi_awareness,
     matching_foreground_window, show_fatal_error, stop_shortcut_pressed,
 };
 
@@ -40,12 +40,13 @@ fn run() -> AppResult<()> {
     })?;
     let config = Config::load(&executable)?;
     let ocr = OcrConnector::new("ru-RU")?;
+    let tray = TrayConnector::start()?;
 
-    while !stop_shortcut_pressed() {
+    while !stop_shortcut_pressed() && !tray.exit_requested() {
         run_cycle(&config, &ocr)?;
-        wait_for_next_cycle(config.poll_interval_seconds);
+        wait_for_next_cycle(config.poll_interval_seconds, &tray);
     }
-    Ok(())
+    tray.shutdown()
 }
 
 fn run_cycle(config: &Config, ocr: &OcrConnector) -> AppResult<()> {
@@ -147,9 +148,9 @@ fn same_dialog(left: DialogCandidate, right: DialogCandidate) -> bool {
         && left.bounds.height.abs_diff(right.bounds.height) <= 20
 }
 
-fn wait_for_next_cycle(seconds: u64) {
+fn wait_for_next_cycle(seconds: u64, tray: &TrayConnector) {
     let deadline = Instant::now() + Duration::from_secs(seconds);
-    while Instant::now() < deadline && !stop_shortcut_pressed() {
+    while Instant::now() < deadline && !stop_shortcut_pressed() && !tray.exit_requested() {
         thread::sleep(Duration::from_millis(100));
     }
 }

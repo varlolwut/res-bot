@@ -57,6 +57,12 @@ pub enum AppError {
 
     #[error("mouse input was only partially sent: requested={requested}, sent={sent}")]
     PartialInput { requested: u32, sent: u32 },
+
+    #[error("embedded application icon is invalid: reason={reason}")]
+    InvalidIcon { reason: String },
+
+    #[error("tray thread failed: reason={reason}")]
+    TrayThread { reason: String },
 }
 
 pub type AppResult<T> = Result<T, AppError>;

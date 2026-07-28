@@ -57,6 +57,7 @@ GDI screen capture ─────── BGRA frame in memory
 - `platform/capture.rs` — захват BGRA через GDI;
 - `platform/ocr.rs` — адаптер Windows Runtime OCR;
 - `platform/input.rs` — движение курсора и `SendInput`;
+- `platform/tray.rs` — скрытое окно Win32, значок области уведомлений и команда «Выход»;
 - `platform/notify.rs` — фатальные сообщения и диагностический OutputDebugString.
 
 ## 3. Захват изображения
@@ -204,4 +205,3 @@ otherwise percentage == 0             => Reject
 Решение, детекторы и OCR-регионы уже не зависят от глобального состояния, поэтому
 для многоконного режима потребуется заменить главным образом планировщик,
 источник кадров и маршрутизацию ввода.
-
