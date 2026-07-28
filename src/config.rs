@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Config {
     pub window_title_fragments: Vec<String>,
     pub poll_interval_seconds: u64,
@@ -13,6 +13,11 @@ pub struct Config {
     pub click_max_duration_ms: u64,
     pub pre_click_min_delay_ms: u64,
     pub pre_click_max_delay_ms: u64,
+    pub confirmation_frame_count: u32,
+    pub confirmation_interval_ms: u64,
+    pub mouse_idle_required_ms: u64,
+    pub mouse_idle_timeout_ms: u64,
+    pub relocate_cursor_after_click: bool,
 }
 
 impl Config {
@@ -24,13 +29,20 @@ impl Config {
             click_max_duration_ms: 650,
             pre_click_min_delay_ms: 180,
             pre_click_max_delay_ms: 480,
+            confirmation_frame_count: 2,
+            confirmation_interval_ms: 150,
+            mouse_idle_required_ms: 600,
+            mouse_idle_timeout_ms: 3_000,
+            relocate_cursor_after_click: true,
         }
     }
 
     pub fn load(executable_path: &Path) -> AppResult<Self> {
-        let path = configuration_path(executable_path);
+        let path = Self::path_for_executable(executable_path);
         if !path.exists() {
-            return Self::built_in().validate();
+            let config = Self::built_in();
+            config.validate()?;
+            return Ok(config);
         }
 
         let source = fs::read_to_string(&path).map_err(|source| AppError::ConfigRead {
@@ -41,10 +53,27 @@ impl Config {
             path: path.display().to_string(),
             source,
         })?;
-        config.validate()
+        config.validate()?;
+        Ok(config)
     }
 
-    fn validate(self) -> AppResult<Self> {
+    pub fn path_for_executable(executable_path: &Path) -> PathBuf {
+        executable_path.with_extension("toml")
+    }
+
+    pub fn save(&self, path: &Path) -> AppResult<()> {
+        self.validate()?;
+        let source = toml::to_string_pretty(self).map_err(|source| AppError::ConfigSerialize {
+            path: path.display().to_string(),
+            source,
+        })?;
+        fs::write(path, source).map_err(|source| AppError::ConfigWrite {
+            path: path.display().to_string(),
+            source,
+        })
+    }
+
+    pub fn validate(&self) -> AppResult<()> {
         if self.window_title_fragments.is_empty()
             || self
                 .window_title_fragments
@@ -74,12 +103,32 @@ impl Config {
             self.pre_click_min_delay_ms,
             self.pre_click_max_delay_ms,
         )?;
-        Ok(self)
+        if !(2..=5).contains(&self.confirmation_frame_count) {
+            return Err(AppError::ConfigValue {
+                field: "confirmation_frame_count",
+                value: self.confirmation_frame_count.to_string(),
+                reason: "must be between 2 and 5",
+            });
+        }
+        validate_bounded(
+            "confirmation_interval_ms",
+            self.confirmation_interval_ms,
+            50,
+            1_000,
+        )?;
+        validate_bounded(
+            "mouse_idle_required_ms",
+            self.mouse_idle_required_ms,
+            100,
+            3_000,
+        )?;
+        validate_bounded(
+            "mouse_idle_timeout_ms",
+            self.mouse_idle_timeout_ms,
+            self.mouse_idle_required_ms,
+            10_000,
+        )
     }
-}
-
-fn configuration_path(executable_path: &Path) -> PathBuf {
-    executable_path.with_extension("toml")
 }
 
 fn validate_range(field: &'static str, minimum: u64, maximum: u64) -> AppResult<()> {
@@ -93,8 +142,23 @@ fn validate_range(field: &'static str, minimum: u64, maximum: u64) -> AppResult<
     Ok(())
 }
 
+fn validate_bounded(field: &'static str, value: u64, minimum: u64, maximum: u64) -> AppResult<()> {
+    if !(minimum..=maximum).contains(&value) {
+        return Err(AppError::ConfigValue {
+            field,
+            value: value.to_string(),
+            reason: "is outside the supported range",
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::env;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::Config;
 
     #[test]
@@ -109,5 +173,39 @@ mod tests {
         config.click_max_duration_ms = 300;
 
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn confirmation_requires_multiple_frames() {
+        let mut config = Config::built_in();
+        config.confirmation_frame_count = 1;
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn built_in_configuration_round_trips_through_toml() {
+        let config = Config::built_in();
+        let source = toml::to_string(&config).unwrap();
+        let decoded = toml::from_str::<Config>(&source).unwrap();
+
+        assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn saved_configuration_can_be_loaded_after_restart() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let executable = env::temp_dir().join(format!("res-bot-config-{unique}.exe"));
+        let path = Config::path_for_executable(&executable);
+        let config = Config::built_in();
+
+        config.save(&path).unwrap();
+        let loaded = Config::load(&executable).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert_eq!(loaded, config);
     }
 }
