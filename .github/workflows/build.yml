@@ -46,15 +46,15 @@ jobs:
       - name: Generate checksum
         shell: pwsh
         run: |
-          $hash = (Get-FileHash target/release/res-bot.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  res-bot.exe" | Set-Content target/release/SHA256SUMS.txt -Encoding ascii
+          $hash = (Get-FileHash target/release/far_nav.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  far_nav.exe" | Set-Content target/release/SHA256SUMS.txt -Encoding ascii
 
       - name: Upload release files
         uses: actions/upload-artifact@v4
         with:
           name: res-bot-windows-x64
           path: |
-            target/release/res-bot.exe
+            target/release/far_nav.exe
             target/release/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -70,8 +70,9 @@ jobs:
             "${{ github.ref_name }}"
           }
           gh release create $tag `
-            target/release/res-bot.exe `
+            target/release/far_nav.exe `
             target/release/SHA256SUMS.txt `
             --target "${{ github.sha }}" `
             --title "res-bot $tag" `
             --generate-notes
+
