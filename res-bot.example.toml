@@ -1,0 +1,7 @@
+window_title_fragments = ["lineage"]
+poll_interval_seconds = 10
+click_min_duration_ms = 280
+click_max_duration_ms = 650
+pre_click_min_delay_ms = 180
+pre_click_max_delay_ms = 480
+
